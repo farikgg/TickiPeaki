@@ -1,27 +1,25 @@
 package handlers
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/gin-gonic/gin"
 
 	"ticketing/models"
 	"ticketing/repository"
 )
 
-// TicketHandler обработчик HTTP-запросов для /tickets.
 type TicketHandler struct {
 	flights repository.FlightRepository
 	tickets repository.TicketRepository
 }
 
-// NewTicketHandler создаёт обработчик билетов.
 func NewTicketHandler(flights repository.FlightRepository, tickets repository.TicketRepository) *TicketHandler {
 	return &TicketHandler{flights: flights, tickets: tickets}
 }
 
-// ticketListResponse ответ с пагинацией для GET /tickets.
 type ticketListResponse struct {
 	Data  []models.Ticket `json:"data"`
 	Page  int             `json:"page"`
@@ -29,7 +27,6 @@ type ticketListResponse struct {
 	Total int             `json:"total"`
 }
 
-// ticketInput — поля билета для создания и обновления.
 type ticketInput struct {
 	FlightID       int     `json:"flight_id"`
 	PassengerName  string  `json:"passenger_name"`
@@ -40,17 +37,14 @@ type ticketInput struct {
 	Status         string  `json:"status"`
 }
 
-// допустимые классы и статусы билетов
 var validClasses = map[string]bool{"economy": true, "business": true, "first": true}
 var validStatuses = map[string]bool{"reserved": true, "paid": true, "cancelled": true}
 
-// List обрабатывает GET /tickets — список с фильтрами и пагинацией.
-func (h *TicketHandler) List(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	page, limit := parsePagination(q)
+func (h *TicketHandler) List(c *gin.Context) {
+	page, limit := parsePagination(c)
 
 	var flightID int
-	if s := q.Get("flight_id"); s != "" {
+	if s := c.Query("flight_id"); s != "" {
 		if n, err := strconv.Atoi(s); err == nil && n > 0 {
 			flightID = n
 		}
@@ -58,14 +52,14 @@ func (h *TicketHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	filter := repository.TicketFilter{
 		FlightID: flightID,
-		Status:   strings.TrimSpace(q.Get("status")),
-		Class:    strings.TrimSpace(q.Get("class")),
+		Status:   strings.TrimSpace(c.Query("status")),
+		Class:    strings.TrimSpace(c.Query("class")),
 		Page:     page,
 		Limit:    limit,
 	}
 
 	data, total := h.tickets.FindAll(filter)
-	writeJSON(w, http.StatusOK, ticketListResponse{
+	c.JSON(http.StatusOK, ticketListResponse{
 		Data:  data,
 		Page:  page,
 		Limit: limit,
@@ -73,17 +67,15 @@ func (h *TicketHandler) List(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Create обрабатывает POST /tickets — бронируем место и создаём билет.
-func (h *TicketHandler) Create(w http.ResponseWriter, r *http.Request) {
+func (h *TicketHandler) Create(c *gin.Context) {
 	var input ticketInput
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		writeError(w, http.StatusBadRequest, "невалидный JSON")
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "невалидный JSON"})
 		return
 	}
 
 	errs := validateTicketInput(input)
 
-	// рейс должен существовать
 	if input.FlightID > 0 {
 		if _, ok := h.flights.FindByID(input.FlightID); !ok {
 			errs["flight_id"] = "рейс не найден"
@@ -91,13 +83,12 @@ func (h *TicketHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(errs) > 0 {
-		writeValidationErrors(w, errs)
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"errors": errs})
 		return
 	}
 
-	// если мест нет — сразу отдаём 409
 	if !h.flights.DecrementSeat(input.FlightID) {
-		writeError(w, http.StatusConflict, "мест нет")
+		c.JSON(http.StatusConflict, gin.H{"error": "мест нет"})
 		return
 	}
 
@@ -111,58 +102,54 @@ func (h *TicketHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Status:         "reserved",
 	}
 	created := h.tickets.Create(t)
-	writeJSON(w, http.StatusCreated, created)
+	c.JSON(http.StatusCreated, created)
 }
 
-// GetByID обрабатывает GET /tickets/{id}.
-func (h *TicketHandler) GetByID(w http.ResponseWriter, r *http.Request) {
-	id, err := extractID(r.URL.Path, "/tickets/")
+func (h *TicketHandler) GetByID(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "невалидный ID билета")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "невалидный ID билета"})
 		return
 	}
 
 	ticket, ok := h.tickets.FindByID(id)
 	if !ok {
-		writeError(w, http.StatusNotFound, "билет не найден")
+		c.JSON(http.StatusNotFound, gin.H{"error": "билет не найден"})
 		return
 	}
 
-	writeJSON(w, http.StatusOK, ticket)
+	c.JSON(http.StatusOK, ticket)
 }
 
-// Update обрабатывает PUT /tickets/{id} — при отмене возвращаем место обратно в рейс.
-func (h *TicketHandler) Update(w http.ResponseWriter, r *http.Request) {
-	id, err := extractID(r.URL.Path, "/tickets/")
+func (h *TicketHandler) Update(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "невалидный ID билета")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "невалидный ID билета"})
 		return
 	}
 
 	existing, ok := h.tickets.FindByID(id)
 	if !ok {
-		writeError(w, http.StatusNotFound, "билет не найден")
+		c.JSON(http.StatusNotFound, gin.H{"error": "билет не найден"})
 		return
 	}
 
 	var input ticketInput
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		writeError(w, http.StatusBadRequest, "невалидный JSON")
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "невалидный JSON"})
 		return
 	}
 
-	// при обновлении flight_id не меняется
 	input.FlightID = existing.FlightID
 
 	errs := validateTicketInput(input)
 	if len(errs) > 0 {
-		writeValidationErrors(w, errs)
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"errors": errs})
 		return
 	}
 
 	newStatus := strings.ToLower(strings.TrimSpace(input.Status))
 
-	// при отмене возвращаем место обратно
 	if newStatus == "cancelled" && existing.Status != "cancelled" {
 		h.flights.IncrementSeat(existing.FlightID)
 	}
@@ -175,35 +162,32 @@ func (h *TicketHandler) Update(w http.ResponseWriter, r *http.Request) {
 	existing.Status = newStatus
 
 	updated, _ := h.tickets.Update(existing)
-	writeJSON(w, http.StatusOK, updated)
+	c.JSON(http.StatusOK, updated)
 }
 
-// Delete обрабатывает DELETE /tickets/{id} — если билет не отменён, освобождаем место.
-func (h *TicketHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	id, err := extractID(r.URL.Path, "/tickets/")
+func (h *TicketHandler) Delete(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "невалидный ID билета")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "невалидный ID билета"})
 		return
 	}
 
 	ticket, ok := h.tickets.FindByID(id)
 	if !ok {
-		writeError(w, http.StatusNotFound, "билет не найден")
+		c.JSON(http.StatusNotFound, gin.H{"error": "билет не найден"})
 		return
 	}
 
-	// если билет не был отменён — возвращаем место
 	if ticket.Status != "cancelled" {
 		h.flights.IncrementSeat(ticket.FlightID)
 	}
 
 	h.tickets.Delete(ticket.ID)
-	w.WriteHeader(http.StatusNoContent)
+	c.Status(http.StatusNoContent)
 }
 
 // ── валидация ─────────────────────────────────────────────────────────────────
 
-// validateTicketInput проверяет поля билета, существование рейса проверяет хендлер.
 func validateTicketInput(t ticketInput) map[string]string {
 	errs := map[string]string{}
 

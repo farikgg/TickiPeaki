@@ -1,27 +1,25 @@
 package handlers
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
+
 	"ticketing/models"
 	"ticketing/repository"
 )
 
-// FlightHandler обработчик HTTP-запросов для /flights.
 type FlightHandler struct {
 	repo repository.FlightRepository
 }
 
-// NewFlightHandler создаёт обработчик рейсов.
 func NewFlightHandler(repo repository.FlightRepository) *FlightHandler {
 	return &FlightHandler{repo: repo}
 }
 
-// flightListResponse ответ с пагинацией для GET /flights.
 type flightListResponse struct {
 	Data  []models.Flight `json:"data"`
 	Page  int             `json:"page"`
@@ -29,21 +27,19 @@ type flightListResponse struct {
 	Total int             `json:"total"`
 }
 
-// List обрабатывает GET /flights — рейсы с фильтрацией и пагинацией.
-func (h *FlightHandler) List(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	page, limit := parsePagination(q)
+func (h *FlightHandler) List(c *gin.Context) {
+	page, limit := parsePagination(c)
 
 	filter := repository.FlightFilter{
-		Type:        strings.TrimSpace(q.Get("type")),
-		Origin:      strings.TrimSpace(q.Get("origin")),
-		Destination: strings.TrimSpace(q.Get("destination")),
+		Type:        strings.TrimSpace(c.Query("type")),
+		Origin:      strings.TrimSpace(c.Query("origin")),
+		Destination: strings.TrimSpace(c.Query("destination")),
 		Page:        page,
 		Limit:       limit,
 	}
 
 	data, total := h.repo.FindAll(filter)
-	writeJSON(w, http.StatusOK, flightListResponse{
+	c.JSON(http.StatusOK, flightListResponse{
 		Data:  data,
 		Page:  page,
 		Limit: limit,
@@ -51,90 +47,85 @@ func (h *FlightHandler) List(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Create обрабатывает POST /flights — создаём рейс.
-func (h *FlightHandler) Create(w http.ResponseWriter, r *http.Request) {
+func (h *FlightHandler) Create(c *gin.Context) {
 	var f models.Flight
-	if err := json.NewDecoder(r.Body).Decode(&f); err != nil {
-		writeError(w, http.StatusBadRequest, "невалидный JSON")
+	if err := c.ShouldBindJSON(&f); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "невалидный JSON"})
 		return
 	}
 
 	errs := validateFlight(f)
 	if len(errs) > 0 {
-		writeValidationErrors(w, errs)
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"errors": errs})
 		return
 	}
 
 	created := h.repo.Create(f)
-	writeJSON(w, http.StatusCreated, created)
+	c.JSON(http.StatusCreated, created)
 }
 
-// GetByID обрабатывает GET /flights/{id}.
-func (h *FlightHandler) GetByID(w http.ResponseWriter, r *http.Request) {
-	id, err := extractID(r.URL.Path, "/flights/")
+func (h *FlightHandler) GetByID(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "невалидный ID рейса")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "невалидный ID рейса"})
 		return
 	}
 
 	f, ok := h.repo.FindByID(id)
 	if !ok {
-		writeError(w, http.StatusNotFound, "не нашли рейс")
+		c.JSON(http.StatusNotFound, gin.H{"error": "не нашли рейс"})
 		return
 	}
 
-	writeJSON(w, http.StatusOK, f)
+	c.JSON(http.StatusOK, f)
 }
 
-// Update обрабатывает PUT /flights/{id} — обновляем все поля кроме id.
-func (h *FlightHandler) Update(w http.ResponseWriter, r *http.Request) {
-	id, err := extractID(r.URL.Path, "/flights/")
+func (h *FlightHandler) Update(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "невалидный ID рейса")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "невалидный ID рейса"})
 		return
 	}
 
 	if _, ok := h.repo.FindByID(id); !ok {
-		writeError(w, http.StatusNotFound, "не нашли рейс")
+		c.JSON(http.StatusNotFound, gin.H{"error": "не нашли рейс"})
 		return
 	}
 
 	var input models.Flight
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		writeError(w, http.StatusBadRequest, "невалидный JSON")
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "невалидный JSON"})
 		return
 	}
 
 	errs := validateFlight(input)
 	if len(errs) > 0 {
-		writeValidationErrors(w, errs)
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"errors": errs})
 		return
 	}
 
 	input.ID = id
 	updated, _ := h.repo.Update(input)
-	writeJSON(w, http.StatusOK, updated)
+	c.JSON(http.StatusOK, updated)
 }
 
-// Delete обрабатывает DELETE /flights/{id}.
-func (h *FlightHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	id, err := extractID(r.URL.Path, "/flights/")
+func (h *FlightHandler) Delete(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "невалидный ID рейса")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "невалидный ID рейса"})
 		return
 	}
 
 	if !h.repo.Delete(id) {
-		writeError(w, http.StatusNotFound, "не нашли рейс")
+		c.JSON(http.StatusNotFound, gin.H{"error": "не нашли рейс"})
 		return
 	}
 
-	w.WriteHeader(http.StatusNoContent)
+	c.Status(http.StatusNoContent)
 }
 
-// ── валидация ─────────────────────────────────────────────────────────────────
+// валидация
 
-// validateFlight проверяет все обязательные поля рейса.
 func validateFlight(f models.Flight) map[string]string {
 	errs := map[string]string{}
 
@@ -164,7 +155,6 @@ func validateFlight(f models.Flight) map[string]string {
 	return errs
 }
 
-// validateTimes проверяет формат RFC3339 и что вылет раньше прилёта.
 func validateTimes(departure, arrival string, errs map[string]string) {
 	var dep, arr time.Time
 
@@ -190,7 +180,6 @@ func validateTimes(departure, arrival string, errs map[string]string) {
 		}
 	}
 
-	// проверяем порядок только если оба времени валидны
 	if _, ok := errs["departure_time"]; !ok {
 		if _, ok := errs["arrival_time"]; !ok {
 			if !dep.Before(arr) {
@@ -200,44 +189,16 @@ func validateTimes(departure, arrival string, errs map[string]string) {
 	}
 }
 
-// ── общие хелперы ─────────────────────────────────────────────────────────────
-
-// writeJSON пишет JSON-ответ с нужным статусом.
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v) //nolint:errcheck
-}
-
-// writeError пишет ошибку в формате {"error": "..."}.
-func writeError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]string{"error": msg})
-}
-
-// writeValidationErrors пишет 422 с ошибками валидации по полям.
-func writeValidationErrors(w http.ResponseWriter, errs map[string]string) {
-	writeJSON(w, http.StatusUnprocessableEntity, map[string]map[string]string{"errors": errs})
-}
-
-// extractID вытаскивает числовой ID из URL-пути.
-func extractID(path, prefix string) (int, error) {
-	s := strings.TrimPrefix(path, prefix)
-	if idx := strings.Index(s, "/"); idx != -1 {
-		s = s[:idx]
-	}
-	return strconv.Atoi(s)
-}
-
-// parsePagination читает page и limit из query, подставляет дефолты.
-func parsePagination(query interface{ Get(string) string }) (page, limit int) {
+// parsePagination читает page и limit из query-параметров.
+func parsePagination(c *gin.Context) (page, limit int) {
 	page = 1
 	limit = 10
-	if s := query.Get("page"); s != "" {
+	if s := c.Query("page"); s != "" {
 		if n, err := strconv.Atoi(s); err == nil && n >= 1 {
 			page = n
 		}
 	}
-	if s := query.Get("limit"); s != "" {
+	if s := c.Query("limit"); s != "" {
 		if n, err := strconv.Atoi(s); err == nil && n >= 1 {
 			limit = n
 		}
