@@ -1,6 +1,6 @@
 # TickiPeaki
 
-REST API для бронирования авиабилетов. Go + Gin + GORM + PostgreSQL.
+REST API для бронирования авиабилетов. Go + Gin + GORM + PostgreSQL + JWT.
 
 ## Требования
 
@@ -19,15 +19,74 @@ go run main.go
 
 По умолчанию подключается к `localhost:5432`, БД `aviation`, пользователь `postgres`, пароль `postgres`.
 
-Можно переопределить через переменную окружения:
+Можно переопределить через переменные окружения:
 
 ```bash
-DATABASE_URL="host=localhost user=myuser password=mypass dbname=aviation port=5432 sslmode=disable" go run main.go
+DATABASE_URL="host=localhost user=myuser password=mypass dbname=aviation port=5432 sslmode=disable" \
+JWT_SECRET="my-secret-key" \
+go run main.go
+```
+
+| Переменная     | По умолчанию                          | Описание                |
+|----------------|---------------------------------------|-------------------------|
+| `DATABASE_URL` | `host=localhost user=postgres ...`    | DSN для PostgreSQL      |
+| `JWT_SECRET`   | `supersecret`                         | Секрет для подписи JWT  |
+
+## Аутентификация (JWT)
+
+API использует JWT-токены. Для доступа к защищённым эндпоинтам нужно:
+
+1. Зарегистрироваться через `POST /register`
+2. Получить токен через `POST /login`
+3. Передавать токен в заголовке: `Authorization: Bearer <token>`
+
+Токен действителен 24 часа.
+
+### Регистрация — POST `/register`
+
+```json
+{
+  "username": "ivan",
+  "password": "secret123",
+  "role": "user"
+}
+```
+
+- `username` и `password` обязательны
+- `password` минимум 6 символов
+- `role`: `user` (по умолчанию) или `admin`
+- Возвращает `201` с данными пользователя
+- Если username занят — `409`
+
+### Вход — POST `/login`
+
+```json
+{
+  "username": "ivan",
+  "password": "secret123"
+}
+```
+
+Возвращает `200`:
+
+```json
+{
+  "token": "eyJhbGciOiJIUzI1NiIs..."
+}
 ```
 
 ## Эндпоинты
 
-### Рейсы (`/flights`)
+### Публичные (без токена)
+
+| Метод | Путь       | Описание     |
+|-------|------------|--------------|
+| POST  | /register  | Регистрация  |
+| POST  | /login     | Вход (токен) |
+
+### Защищённые (требуют `Authorization: Bearer <token>`)
+
+#### Рейсы (`/flights`)
 
 | Метод  | Путь         | Описание       |
 |--------|--------------|----------------|
@@ -38,7 +97,7 @@ DATABASE_URL="host=localhost user=myuser password=mypass dbname=aviation port=54
 
 Фильтры: `?origin=`, `?destination=`, `?carrier=`, `?page=`, `?limit=`
 
-### Пассажиры (`/passengers`)
+#### Пассажиры (`/passengers`)
 
 | Метод  | Путь            | Описание           |
 |--------|-----------------|--------------------|
@@ -49,7 +108,7 @@ DATABASE_URL="host=localhost user=myuser password=mypass dbname=aviation port=54
 
 Фильтры: `?page=`, `?limit=`
 
-### Билеты (`/tickets`)
+#### Билеты (`/tickets`)
 
 | Метод  | Путь         | Описание            |
 |--------|--------------|---------------------|
@@ -66,7 +125,30 @@ DATABASE_URL="host=localhost user=myuser password=mypass dbname=aviation port=54
 
 Для всех POST/PUT запросов: Headers -> `Content-Type: application/json`
 
-### Создать рейс — POST `/flights`
+Для защищённых эндпоинтов: Headers -> `Authorization: Bearer <token>`
+
+### 1. Регистрация — POST `/register`
+
+```json
+{
+  "username": "admin",
+  "password": "admin123",
+  "role": "admin"
+}
+```
+
+### 2. Вход — POST `/login`
+
+```json
+{
+  "username": "admin",
+  "password": "admin123"
+}
+```
+
+Скопируйте `token` из ответа.
+
+### 3. Создать рейс — POST `/flights`
 
 ```json
 {
@@ -81,7 +163,7 @@ DATABASE_URL="host=localhost user=myuser password=mypass dbname=aviation port=54
 }
 ```
 
-### Создать пассажира — POST `/passengers`
+### 4. Создать пассажира — POST `/passengers`
 
 ```json
 {
@@ -92,7 +174,7 @@ DATABASE_URL="host=localhost user=myuser password=mypass dbname=aviation port=54
 }
 ```
 
-### Забронировать билет — POST `/tickets`
+### 5. Забронировать билет — POST `/tickets`
 
 ```json
 {
@@ -108,7 +190,7 @@ DATABASE_URL="host=localhost user=myuser password=mypass dbname=aviation port=54
 
 При бронировании `available_seats` рейса уменьшается на 1. Если мест нет — `409`.
 
-### Обновить билет — PUT `/tickets/1`
+### 6. Обновить билет — PUT `/tickets/1`
 
 ```json
 {
@@ -160,15 +242,20 @@ aviation/
 ├── models/
 │   ├── flight.go
 │   ├── passenger.go
-│   └── ticket.go
+│   ├── ticket.go
+│   └── user.go
 ├── repository/
 │   ├── interfaces.go
 │   └── postgres/
 │       ├── flight_repo.go
 │       ├── passenger_repo.go
-│       └── ticket_repo.go
-└── handlers/
-    ├── flight_handler.go
-    ├── passenger_handler.go
-    └── ticket_handler.go
+│       ├── ticket_repo.go
+│       └── user_repo.go
+├── handlers/
+│   ├── flight_handler.go
+│   ├── passenger_handler.go
+│   ├── ticket_handler.go
+│   └── auth_handler.go
+└── middleware/
+    └── auth.go
 ```
