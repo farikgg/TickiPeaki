@@ -20,6 +20,11 @@ type PassengerRepository interface {
 	Delete(id uint) error
 }
 
+type UserRepository interface {
+	FindByUsername(username string) (models.User, error)
+	Create(u *models.User) error
+}
+
 type TicketRepository interface {
 	FindAll(filter TicketFilter) ([]models.Ticket, int64, error)
 	FindByID(id uint) (models.Ticket, error)
