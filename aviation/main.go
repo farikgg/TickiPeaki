@@ -3,6 +3,7 @@ package main
 import (
 	"aviation/config"
 	"aviation/handlers"
+	"aviation/middleware"
 	"aviation/repository/postgres"
 	"log"
 	"os"
@@ -21,30 +22,50 @@ func main() {
 		log.Fatal(err)
 	}
 
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		jwtSecret = "supersecret"
+	}
+
 	flightRepo := postgres.NewFlightRepo(db)
 	passengerRepo := postgres.NewPassengerRepo(db)
 	ticketRepo := postgres.NewTicketRepo(db)
+	userRepo := postgres.NewUserRepo(db)
+	favoriteRepo := postgres.NewFavoriteRepo(db)
 
 	flightHandler := handlers.NewFlightHandler(flightRepo)
 	passengerHandler := handlers.NewPassengerHandler(passengerRepo)
 	ticketHandler := handlers.NewTicketHandler(ticketRepo, flightRepo)
+	authHandler := handlers.NewAuthHandler(userRepo)
+	favoriteHandler := handlers.NewFavoriteHandler(favoriteRepo, flightRepo)
 
 	r := gin.Default()
 
-	r.GET("/flights", flightHandler.GetAll)
-	r.POST("/flights", flightHandler.Create)
-	r.PUT("/flights/:id", flightHandler.Update)
-	r.DELETE("/flights/:id", flightHandler.Delete)
+	r.POST("/register", authHandler.Register)
+	r.POST("/login", authHandler.Login)
 
-	r.GET("/passengers", passengerHandler.GetAll)
-	r.POST("/passengers", passengerHandler.Create)
-	r.PUT("/passengers/:id", passengerHandler.Update)
-	r.DELETE("/passengers/:id", passengerHandler.Delete)
+	protected := r.Group("/")
+	protected.Use(middleware.Auth(jwtSecret))
+	{
+		protected.GET("/flights/favorites", favoriteHandler.List)
+		protected.PUT("/flights/:id/favorites", favoriteHandler.Add)
+		protected.DELETE("/flights/:id/favorites", favoriteHandler.Remove)
 
-	r.GET("/tickets", ticketHandler.GetAll)
-	r.POST("/tickets", ticketHandler.Create)
-	r.PUT("/tickets/:id", ticketHandler.Update)
-	r.DELETE("/tickets/:id", ticketHandler.Delete)
+		protected.GET("/flights", flightHandler.GetAll)
+		protected.POST("/flights", flightHandler.Create)
+		protected.PUT("/flights/:id", flightHandler.Update)
+		protected.DELETE("/flights/:id", flightHandler.Delete)
+
+		protected.GET("/passengers", passengerHandler.GetAll)
+		protected.POST("/passengers", passengerHandler.Create)
+		protected.PUT("/passengers/:id", passengerHandler.Update)
+		protected.DELETE("/passengers/:id", passengerHandler.Delete)
+
+		protected.GET("/tickets", ticketHandler.GetAll)
+		protected.POST("/tickets", ticketHandler.Create)
+		protected.PUT("/tickets/:id", ticketHandler.Update)
+		protected.DELETE("/tickets/:id", ticketHandler.Delete)
+	}
 
 	if err := r.Run(":8080"); err != nil {
 		log.Fatal(err)

@@ -20,12 +20,23 @@ type PassengerRepository interface {
 	Delete(id uint) error
 }
 
+type UserRepository interface {
+	FindByUsername(username string) (models.User, error)
+	Create(u *models.User) error
+}
+
 type TicketRepository interface {
 	FindAll(filter TicketFilter) ([]models.Ticket, int64, error)
 	FindByID(id uint) (models.Ticket, error)
 	Create(t *models.Ticket) error
 	Update(t *models.Ticket) error
 	Delete(id uint) error
+}
+
+type FavoriteRepository interface {
+	FindAllByUser(userID uint, page, limit int) ([]models.Flight, int64, error)
+	Add(userID, flightID uint) error
+	Remove(userID, flightID uint) error
 }
 
 type FlightFilter struct {
