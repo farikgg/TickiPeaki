@@ -1,0 +1,13 @@
+services:
+  tickets:
+    build:
+      context: ./tickets
+      dockerfile: Dockerfile
+    container_name: tickets_pdf_service
+    ports:
+      - "8001:8000"
+    volumes:
+      - ./tickets:/app
+    env_file:
+      - ./tickets/.env
+    restart: unless-stopped

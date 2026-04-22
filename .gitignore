@@ -12,3 +12,9 @@
 # OS
 .DS_Store
 Thumbs.db
+
+# Python
+tickets/.env
+tickets/.venv/
+tickets/uv.lock
+__pycache__

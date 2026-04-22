@@ -1,0 +1,15 @@
+[project]
+name = "tickets"
+version = "0.1.0"
+description = "Service for generating PDF tickets"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.135.3",
+    "jinja2>=3.1.6",
+    "pydantic[email]>=2.13.0",
+    "pydantic-settings>=2.13.1",
+    "python-multipart>=0.0.26",
+    "uvicorn[standard]>=0.44.0",
+    "weasyprint>=68.1",
+]
