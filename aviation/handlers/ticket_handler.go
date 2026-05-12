@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"aviation/clients"
 	"aviation/models"
 	"aviation/repository"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -15,10 +17,15 @@ import (
 type TicketHandler struct {
 	ticketRepo repository.TicketRepository
 	flightRepo repository.FlightRepository
+	pdfClient  *clients.PDFClient
 }
 
-func NewTicketHandler(tr repository.TicketRepository, fr repository.FlightRepository) *TicketHandler {
-	return &TicketHandler{ticketRepo: tr, flightRepo: fr}
+func NewTicketHandler(
+	ticketRepo repository.TicketRepository,
+	flightRepo repository.FlightRepository,
+	pdfClient *clients.PDFClient,
+) *TicketHandler {
+	return &TicketHandler{ticketRepo: ticketRepo, flightRepo: flightRepo, pdfClient: pdfClient}
 }
 
 func (h *TicketHandler) GetAll(c *gin.Context) {
@@ -107,7 +114,7 @@ func (h *TicketHandler) Update(c *gin.Context) {
 		return
 	}
 
-	existing, err := h.ticketRepo.FindByID(uint(id))
+	oldTicket, err := h.ticketRepo.FindByID(uint(id))
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "не найдено"})
@@ -128,6 +135,7 @@ func (h *TicketHandler) Update(c *gin.Context) {
 		return
 	}
 
+	existing := oldTicket
 	if input.SeatNumber != "" {
 		existing.SeatNumber = input.SeatNumber
 	}
@@ -160,7 +168,21 @@ func (h *TicketHandler) Update(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, existing)
+	updatedTicket, err := h.ticketRepo.FindByID(uint(id))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// если статус только что стал "paid" — вызываем pdf-service
+	if input.Status == "paid" && oldTicket.Status != "paid" {
+		if err := h.pdfClient.GenerateTicket(updatedTicket); err != nil {
+			// не фейлим запрос — билет уже сохранён, просто логируем
+			log.Printf("pdf-service недоступен: %v", err)
+		}
+	}
+
+	c.JSON(http.StatusOK, updatedTicket)
 }
 
 func (h *TicketHandler) Delete(c *gin.Context) {

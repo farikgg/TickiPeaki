@@ -1,13 +1,58 @@
 # TickiPeaki
 
 REST API для бронирования авиабилетов. Go + Gin + GORM + PostgreSQL.
+PDF-билеты генерируются отдельным Python-сервисом, который вызывается из Go через Resty.
+
+## Архитектура
+
+```
+aviation/ (Go :8080)               db/ (PostgreSQL :5432)
+    └── PUT /tickets/:id (status→paid)
+            └── clients.PDFClient.GenerateTicket()
+                    └── POST http://pdf-service:8000/generate-ticket
+                            └── tickets/ (Python FastAPI :8000)
+```
 
 ## Требования
 
-- Go 1.22+
+- Docker + Docker Compose
+
+Локальный запуск без Docker (опционально):
+- Go 1.23+
 - PostgreSQL
 
-## Запуск
+## Запуск через Docker
+
+```bash
+docker-compose up --build
+```
+
+Поднимутся три сервиса:
+
+| Сервис      | Порт | Описание                       |
+|-------------|------|--------------------------------|
+| aviation    | 8080 | Go API (Gin + GORM)            |
+| pdf-service | 8000 | Python FastAPI, генерация PDF  |
+| db          | 5432 | PostgreSQL 15                  |
+
+Все сервисы в общей сети `aviation-net`. БД хранится в volume `postgres_data`.
+`aviation` стартует только после healthcheck postgres.
+
+Остановка с очисткой данных:
+
+```bash
+docker-compose down -v
+```
+
+## Переменные окружения (aviation)
+
+| Переменная        | По умолчанию                                                                  |
+|-------------------|-------------------------------------------------------------------------------|
+| `DATABASE_URL`    | `host=db user=postgres password=postgres dbname=aviation port=5432 sslmode=disable` |
+| `PDF_SERVICE_URL` | `http://pdf-service:8000`                                                     |
+| `JWT_SECRET`      | `supersecret`                                                                 |
+
+## Локальный запуск без Docker
 
 ```bash
 cd aviation
@@ -15,14 +60,13 @@ go mod tidy
 go run main.go
 ```
 
-Сервер стартует на `http://localhost:8080`.
-
-По умолчанию подключается к `localhost:5432`, БД `aviation`, пользователь `postgres`, пароль `postgres`.
-
-Можно переопределить через переменную окружения:
+Сервер стартует на `http://localhost:8080`. По умолчанию подключается к `localhost:5432`,
+БД `aviation`, пользователь `postgres`, пароль `postgres`.
 
 ```bash
-DATABASE_URL="host=localhost user=myuser password=mypass dbname=aviation port=5432 sslmode=disable" go run main.go
+DATABASE_URL="host=localhost user=myuser password=mypass dbname=aviation port=5432 sslmode=disable" \
+PDF_SERVICE_URL="http://localhost:8000" \
+go run main.go
 ```
 
 ## Эндпоинты
@@ -59,6 +103,16 @@ DATABASE_URL="host=localhost user=myuser password=mypass dbname=aviation port=54
 | DELETE | /tickets/:id | Удалить билет       |
 
 Фильтры: `?flight_id=`, `?passenger_id=`, `?status=`, `?class=`, `?page=`, `?limit=`
+
+## Интеграция с pdf-service
+
+При обновлении билета через `PUT /tickets/:id` со статусом `paid` (если предыдущий
+статус был не `paid`) Go-сервис вызывает `POST {PDF_SERVICE_URL}/generate-ticket`
+через Resty v2. Hooks `OnBeforeRequest` / `OnAfterResponse` логируют метод, URL и
+статус ответа.
+
+Если pdf-service недоступен — основной запрос не падает, ошибка только пишется в лог.
+Билет к этому моменту уже сохранён в БД.
 
 ## Тестирование через Postman
 
@@ -121,6 +175,7 @@ DATABASE_URL="host=localhost user=myuser password=mypass dbname=aviation port=54
 
 Допустимые значения `status`: `reserved`, `paid`, `cancelled`
 
+При смене статуса на `paid` запускается генерация PDF в pdf-service.
 При смене статуса на `cancelled` место на рейсе освобождается.
 
 ### GET-запросы с фильтрами
@@ -153,22 +208,33 @@ DELETE /tickets/1
 ## Структура
 
 ```
-aviation/
-├── main.go
-├── config/
-│   └── database.go
-├── models/
-│   ├── flight.go
-│   ├── passenger.go
-│   └── ticket.go
-├── repository/
-│   ├── interfaces.go
-│   └── postgres/
-│       ├── flight_repo.go
-│       ├── passenger_repo.go
-│       └── ticket_repo.go
-└── handlers/
-    ├── flight_handler.go
-    ├── passenger_handler.go
-    └── ticket_handler.go
+.
+├── docker-compose.yaml
+├── aviation/                 # Go API
+│   ├── Dockerfile
+│   ├── .dockerignore
+│   ├── main.go
+│   ├── config/
+│   │   └── database.go
+│   ├── models/
+│   │   ├── flight.go
+│   │   ├── passenger.go
+│   │   └── ticket.go
+│   ├── repository/
+│   │   ├── interfaces.go
+│   │   └── postgres/
+│   │       ├── flight_repo.go
+│   │       ├── passenger_repo.go
+│   │       └── ticket_repo.go
+│   ├── handlers/
+│   │   ├── flight_handler.go
+│   │   ├── passenger_handler.go
+│   │   └── ticket_handler.go
+│   └── clients/
+│       └── pdf_client.go     # Resty-клиент к pdf-service
+└── tickets/                  # Python FastAPI, генерация PDF
+    ├── Dockerfile
+    ├── pyproject.toml
+    ├── src/
+    └── templates/
 ```

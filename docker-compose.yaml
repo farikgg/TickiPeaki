@@ -1,13 +1,59 @@
 services:
+
+  aviation:
+    build:
+      context: ./aviation
+      dockerfile: Dockerfile
+    container_name: aviation_service
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=host=db user=postgres password=postgres dbname=aviation port=5432 sslmode=disable
+      - PDF_SERVICE_URL=http://pdf-service:8000
+      - JWT_SECRET=supersecret
+    restart: on-failure
+    networks:
+      - aviation-net
+
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: aviation
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aviation-net
+
   tickets:
     build:
       context: ./tickets
       dockerfile: Dockerfile
     container_name: tickets_pdf_service
     ports:
-      - "8001:8000"
+      - "8000:8000"
     volumes:
       - ./tickets:/app
     env_file:
       - ./tickets/.env
     restart: unless-stopped
+    networks:
+      - aviation-net
+
+volumes:
+  postgres_data:
+
+networks:
+  aviation-net:
+    driver: bridge

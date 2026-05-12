@@ -1,6 +1,7 @@
 package main
 
 import (
+	"aviation/clients"
 	"aviation/config"
 	"aviation/handlers"
 	"aviation/repository/postgres"
@@ -16,6 +17,11 @@ func main() {
 		dsn = "host=localhost user=postgres password=postgres dbname=aviation port=5432 sslmode=disable"
 	}
 
+	pdfServiceURL := os.Getenv("PDF_SERVICE_URL")
+	if pdfServiceURL == "" {
+		pdfServiceURL = "http://localhost:8000"
+	}
+
 	db, err := config.Connect(dsn)
 	if err != nil {
 		log.Fatal(err)
@@ -25,9 +31,11 @@ func main() {
 	passengerRepo := postgres.NewPassengerRepo(db)
 	ticketRepo := postgres.NewTicketRepo(db)
 
+	pdfClient := clients.NewPDFClient(pdfServiceURL)
+
 	flightHandler := handlers.NewFlightHandler(flightRepo)
 	passengerHandler := handlers.NewPassengerHandler(passengerRepo)
-	ticketHandler := handlers.NewTicketHandler(ticketRepo, flightRepo)
+	ticketHandler := handlers.NewTicketHandler(ticketRepo, flightRepo, pdfClient)
 
 	r := gin.Default()
 
