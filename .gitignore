@@ -19,3 +19,6 @@ tickets/.env
 tickets/.venv/
 tickets/uv.lock
 __pycache__
+
+# Front
+aviation-frontend/node_modules/

@@ -51,6 +51,19 @@ services:
     networks:
       - aviation-net
 
+  frontend:
+    build:
+      context: ./aviation-frontend
+      dockerfile: Dockerfile
+    container_name: aviation_frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - aviation
+    restart: unless-stopped
+    networks:
+      - aviation-net
+
 volumes:
   postgres_data:
 
