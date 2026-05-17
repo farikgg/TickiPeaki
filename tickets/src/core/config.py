@@ -8,7 +8,7 @@ from functools import lru_cache
 
 from src.core.constants import FILE_ENCODER
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
 ENV_FILE = BASE_DIR / ".env"
 
 if not ENV_FILE.exists():

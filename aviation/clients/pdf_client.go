@@ -65,7 +65,7 @@ func (p *PDFClient) GenerateTicket(ticket models.Ticket) error {
 
 	resp, err := p.client.R().
 		SetBody(payload).
-		Post(p.baseURL + "/generate-ticket")
+		Post(fmt.Sprintf("%s/api/v1/generate_ticket", p.baseURL))
 	if err != nil {
 		return err
 	}

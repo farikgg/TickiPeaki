@@ -9,7 +9,7 @@ from weasyprint import HTML
 
 from src.schemas.ticket import TicketSchema
 
-TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
+TEMPLATES_DIR = Path(__file__).resolve().parent.parent.parent / "templates"
 env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)))
 
 

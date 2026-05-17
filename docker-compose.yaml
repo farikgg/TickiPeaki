@@ -12,7 +12,7 @@ services:
         condition: service_healthy
     environment:
       - DATABASE_URL=host=db user=postgres password=postgres dbname=aviation port=5432 sslmode=disable
-      - PDF_SERVICE_URL=http://pdf-service:8000
+      - PDF_SERVICE_URL=http://tickets:8000
       - JWT_SECRET=supersecret
     restart: on-failure
     networks:
