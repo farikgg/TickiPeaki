@@ -14,7 +14,7 @@ type PDFClient struct {
 	baseURL string
 }
 
-type ticketPayload struct {
+type generateRequest struct {
 	TicketID       uint    `json:"ticket_id"`
 	FlightNumber   string  `json:"flight_number"`
 	Origin         string  `json:"origin"`
@@ -29,16 +29,24 @@ type ticketPayload struct {
 	Price          float64 `json:"price"`
 }
 
+type generateResponse struct {
+	TicketID uint   `json:"ticket_id"`
+	Status   string `json:"status"`
+}
+
+type statusResponse struct {
+	Status string  `json:"status"`
+	URL    *string `json:"url"`
+}
+
 func NewPDFClient(baseURL string) *PDFClient {
 	client := resty.New()
 
-	// логируем каждый исходящий запрос
 	client.OnBeforeRequest(func(c *resty.Client, req *resty.Request) error {
 		log.Printf("[pdf-client] %s %s", req.Method, req.URL)
 		return nil
 	})
 
-	// логируем каждый ответ
 	client.OnAfterResponse(func(c *resty.Client, resp *resty.Response) error {
 		log.Printf("[pdf-client] статус ответа: %d", resp.StatusCode())
 		return nil
@@ -47,8 +55,8 @@ func NewPDFClient(baseURL string) *PDFClient {
 	return &PDFClient{client: client, baseURL: baseURL}
 }
 
-func (p *PDFClient) GenerateTicket(ticket models.Ticket) error {
-	payload := ticketPayload{
+func (p *PDFClient) RequestGeneration(ticket models.Ticket) error {
+	payload := generateRequest{
 		TicketID:       ticket.ID,
 		FlightNumber:   ticket.Flight.FlightNumber,
 		Origin:         ticket.Flight.Origin,
@@ -63,16 +71,49 @@ func (p *PDFClient) GenerateTicket(ticket models.Ticket) error {
 		Price:          ticket.Price,
 	}
 
+	var result generateResponse
 	resp, err := p.client.R().
 		SetBody(payload).
-		Post(fmt.Sprintf("%s/api/v1/generate_ticket", p.baseURL))
+		SetResult(&result).
+		Post(fmt.Sprintf("%s/api/v1/ticket_generate", p.baseURL))
 	if err != nil {
 		return err
 	}
 
-	if resp.StatusCode() != 200 {
+	if resp.StatusCode() != 202 {
 		return fmt.Errorf("pdf-service вернул %d", resp.StatusCode())
 	}
 
 	return nil
+}
+
+func (p *PDFClient) PollStatus(ticketID uint) (*string, error) {
+	maxAttempts := 15
+	interval := 2 * time.Second
+
+	for i := 0; i < maxAttempts; i++ {
+		var result statusResponse
+		resp, err := p.client.R().
+			SetResult(&result).
+			Get(fmt.Sprintf("%s/api/v1/ticket_status/%d", p.baseURL, ticketID))
+		if err != nil {
+			return nil, err
+		}
+
+		if resp.StatusCode() == 404 {
+			return nil, fmt.Errorf("ticket %d не найден в pdf-service", ticketID)
+		}
+
+		if result.Status == "ready" && result.URL != nil {
+			return result.URL, nil
+		}
+
+		if result.Status == "failed" {
+			return nil, fmt.Errorf("pdf-service не смог сгенерировать билет %d", ticketID)
+		}
+
+		time.Sleep(interval)
+	}
+
+	return nil, fmt.Errorf("pdf-service не ответил за %d попыток", maxAttempts)
 }

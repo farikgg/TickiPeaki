@@ -174,12 +174,22 @@ func (h *TicketHandler) Update(c *gin.Context) {
 		return
 	}
 
-	// если статус только что стал "paid" — вызываем pdf-service
 	if input.Status == "paid" && oldTicket.Status != "paid" {
-		if err := h.pdfClient.GenerateTicket(updatedTicket); err != nil {
-			// не фейлим запрос — билет уже сохранён, просто логируем
-			log.Printf("pdf-service недоступен: %v", err)
-		}
+		clients.StartPDFWorker(
+			h.pdfClient,
+			updatedTicket,
+			func(pdfURL string) {
+				updatedTicket.PDFURL = &pdfURL
+				if err := h.ticketRepo.Update(&updatedTicket); err != nil {
+					log.Printf("не смогли сохранить pdf_url для билета %d: %v", updatedTicket.ID, err)
+					return
+				}
+				log.Printf("PDF для билета %d сохранён: %s", updatedTicket.ID, pdfURL)
+			},
+			func(err error) {
+				log.Printf("ошибка генерации PDF для билета %d: %v", updatedTicket.ID, err)
+			},
+		)
 	}
 
 	c.JSON(http.StatusOK, updatedTicket)

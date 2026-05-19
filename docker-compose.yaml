@@ -4,21 +4,21 @@ services:
     build:
       context: ./aviation
       dockerfile: Dockerfile
-    container_name: aviation_service
+    container_name: "aviation_service"
     ports:
       - "8080:8080"
     depends_on:
-      db:
+      database:
         condition: service_healthy
     environment:
-      - DATABASE_URL=host=db user=postgres password=postgres dbname=aviation port=5432 sslmode=disable
+      - DATABASE_URL=host=database user=postgres password=postgres dbname=aviation port=5432 sslmode=disable
       - PDF_SERVICE_URL=http://tickets:8000
       - JWT_SECRET=supersecret
     restart: on-failure
     networks:
       - aviation-net
 
-  db:
+  database:
     image: postgres:15-alpine
     environment:
       POSTGRES_USER: postgres
@@ -40,7 +40,7 @@ services:
     build:
       context: ./tickets
       dockerfile: Dockerfile
-    container_name: tickets_pdf_service
+    container_name: "tickets_pdf_service"
     ports:
       - "8000:8000"
     volumes:
@@ -55,7 +55,7 @@ services:
     build:
       context: ./aviation-frontend
       dockerfile: Dockerfile
-    container_name: aviation_frontend
+    container_name: "frontend"
     ports:
       - "5173:80"
     depends_on:
@@ -64,8 +64,33 @@ services:
     networks:
       - aviation-net
 
+  minio:
+    image: minio/minio
+    container_name: "s3"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - aviation-net
+
+  redis:
+    container_name: "redis"
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    networks:
+      - aviation-net
+
 volumes:
   postgres_data:
+  minio_data:
 
 networks:
   aviation-net:

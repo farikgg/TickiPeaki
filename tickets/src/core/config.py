@@ -24,12 +24,21 @@ class _ProjectBaseSettings(BaseSettings):
         extra="ignore",
     )
 
+
 class AppSettings(_ProjectBaseSettings):
     """Настройки сервиса по созданию PDF билетов"""
     environment: Literal["local", "dev", "prod"] = Field(default="local", validation_alias="APP_ENV")
     app_name: str = Field(default="Generate ticket PDF service")
     debug: bool = Field(default=False, validation_alias="APP_DEBUG")
 
+    # redis
+    redis_url: str = Field(..., alias="REDIS_URL")
+
+    # s3
+    endpoint_url: str = Field(..., alias="S3_ENDPOINT_URL")
+    access_key: str = Field(..., alias="S3_ACCESS_KEY")
+    secret_key: str = Field(..., alias="S3_SECRET_KEY")
+    bucket: str = Field(..., alias="S3_BUCKET")
 
 @lru_cache
 def get_settings() -> AppSettings:

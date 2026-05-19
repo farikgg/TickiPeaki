@@ -13,4 +13,5 @@ type Ticket struct {
 	Price       float64   `json:"price"`
 	Status      string    `json:"status"`
 	BookedAt    time.Time `json:"booked_at"`
+	PDFURL      *string   `json:"pdf_url" gorm:"default:null"`
 }
