@@ -3,7 +3,6 @@ package postgres
 import (
 	"aviation/models"
 	"aviation/repository"
-	"errors"
 
 	"gorm.io/gorm"
 )
@@ -62,28 +61,4 @@ func (r *FlightRepo) Update(f *models.Flight) error {
 
 func (r *FlightRepo) Delete(id uint) error {
 	return r.db.Delete(&models.Flight{}, id).Error
-}
-
-// атомарный апдейт — иначе будет гонка
-func (r *FlightRepo) DecrementSeat(id uint) error {
-	result := r.db.Model(&models.Flight{}).
-		Where("id = ? AND available_seats > 0", id).
-		UpdateColumn("available_seats", gorm.Expr("available_seats - 1"))
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return errors.New("мест нет")
-	}
-	return nil
-}
-
-func (r *FlightRepo) IncrementSeat(id uint) error {
-	result := r.db.Model(&models.Flight{}).
-		Where("id = ?", id).
-		UpdateColumn("available_seats", gorm.Expr("available_seats + 1"))
-	if result.Error != nil {
-		return result.Error
-	}
-	return nil
 }

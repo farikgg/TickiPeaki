@@ -15,21 +15,42 @@ import (
 
 type mockPassengerRepo struct {
 	findAll  func(page, limit int) ([]models.Passenger, int64, error)
-	findByID func(id uint) (models.Passenger, error)
-	create   func(p *models.Passenger) error
-	update   func(p *models.Passenger) error
-	delete   func(id uint) error
+	findByID func(uint) (models.Passenger, error)
+	create   func(*models.Passenger) error
+	update   func(*models.Passenger) error
+	delete   func(uint) error
 }
 
 func (m *mockPassengerRepo) FindAll(page, limit int) ([]models.Passenger, int64, error) {
+	if m.findAll == nil {
+		return nil, 0, nil
+	}
 	return m.findAll(page, limit)
 }
 func (m *mockPassengerRepo) FindByID(id uint) (models.Passenger, error) {
+	if m.findByID == nil {
+		return models.Passenger{}, nil
+	}
 	return m.findByID(id)
 }
-func (m *mockPassengerRepo) Create(p *models.Passenger) error { return m.create(p) }
-func (m *mockPassengerRepo) Update(p *models.Passenger) error { return m.update(p) }
-func (m *mockPassengerRepo) Delete(id uint) error             { return m.delete(id) }
+func (m *mockPassengerRepo) Create(p *models.Passenger) error {
+	if m.create == nil {
+		return nil
+	}
+	return m.create(p)
+}
+func (m *mockPassengerRepo) Update(p *models.Passenger) error {
+	if m.update == nil {
+		return nil
+	}
+	return m.update(p)
+}
+func (m *mockPassengerRepo) Delete(id uint) error {
+	if m.delete == nil {
+		return nil
+	}
+	return m.delete(id)
+}
 
 func newPassengerRouter(repo repository.PassengerRepository) *gin.Engine {
 	gin.SetMode(gin.TestMode)
@@ -43,19 +64,19 @@ func newPassengerRouter(repo repository.PassengerRepository) *gin.Engine {
 }
 
 func TestPassengerList_Success(t *testing.T) {
-	mock := &mockPassengerRepo{
+	repo := &mockPassengerRepo{
 		findAll: func(page, limit int) ([]models.Passenger, int64, error) {
 			return []models.Passenger{
-				{ID: 1, FullName: "Иван Иванов", Email: "ivan@example.com", Phone: "+77001234567", PassportNum: "N1111111"},
-				{ID: 2, FullName: "Пётр Петров", Email: "petr@example.com", Phone: "+77001234568", PassportNum: "N2222222"},
-				{ID: 3, FullName: "Анна Смирнова", Email: "anna@example.com", Phone: "+77001234569", PassportNum: "N3333333"},
+				{ID: 1, FullName: "Рафаэль Ахметов", Email: "rafi@example.com", Phone: "+77011234567", PassportNum: "N12345678"},
+				{ID: 2, FullName: "Айгерим Бекова", Email: "aigerim@example.com", Phone: "+77029876543", PassportNum: "N87654321"},
+				{ID: 3, FullName: "Данияр Сейткали", Email: "daniyar@example.com", Phone: "+77031112233", PassportNum: "N11223344"},
 			}, 3, nil
 		},
 	}
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/passengers?page=1&limit=10", nil)
-	newPassengerRouter(mock).ServeHTTP(w, req)
+	newPassengerRouter(repo).ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
@@ -69,40 +90,40 @@ func TestPassengerList_Success(t *testing.T) {
 }
 
 func TestPassengerCreate_Success(t *testing.T) {
-	mock := &mockPassengerRepo{
+	repo := &mockPassengerRepo{
 		create: func(p *models.Passenger) error {
 			p.ID = 42
 			return nil
 		},
 	}
 
-	passenger := models.Passenger{
-		FullName:    "Иван Иванов",
-		Email:       "ivan@example.com",
-		Phone:       "+77001234567",
-		PassportNum: "N1234567",
+	payload := models.Passenger{
+		FullName:    "Рафаэль Ахметов",
+		Email:       "rafi@example.com",
+		Phone:       "+77011234567",
+		PassportNum: "N12345678",
 	}
-	body, _ := json.Marshal(passenger)
+	body, _ := json.Marshal(payload)
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/passengers", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	newPassengerRouter(mock).ServeHTTP(w, req)
+	newPassengerRouter(repo).ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusCreated, w.Code)
 
 	var resp map[string]interface{}
 	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, float64(42), resp["id"])
+	assert.Equal(t, "rafi@example.com", resp["email"])
 }
 
 func TestPassengerCreate_ValidationError(t *testing.T) {
-	mock := &mockPassengerRepo{}
+	repo := &mockPassengerRepo{}
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/passengers", bytes.NewReader([]byte(`{}`)))
 	req.Header.Set("Content-Type", "application/json")
-	newPassengerRouter(mock).ServeHTTP(w, req)
+	newPassengerRouter(repo).ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, w.Body.String(), "error")

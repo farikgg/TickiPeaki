@@ -17,15 +17,30 @@ import (
 type TicketHandler struct {
 	ticketRepo repository.TicketRepository
 	flightRepo repository.FlightRepository
+	seatRepo   repository.SeatRepository
+	userRepo   repository.UserRepository
 	pdfClient  *clients.PDFClient
 }
 
 func NewTicketHandler(
 	ticketRepo repository.TicketRepository,
 	flightRepo repository.FlightRepository,
+	seatRepo repository.SeatRepository,
+	userRepo repository.UserRepository,
 	pdfClient *clients.PDFClient,
 ) *TicketHandler {
-	return &TicketHandler{ticketRepo: ticketRepo, flightRepo: flightRepo, pdfClient: pdfClient}
+	return &TicketHandler{
+		ticketRepo: ticketRepo,
+		flightRepo: flightRepo,
+		seatRepo:   seatRepo,
+		userRepo:   userRepo,
+		pdfClient:  pdfClient,
+	}
+}
+
+type createTicketRequest struct {
+	FlightID uint `json:"flight_id" binding:"required"`
+	SeatID   uint `json:"seat_id"   binding:"required"`
 }
 
 func (h *TicketHandler) GetAll(c *gin.Context) {
@@ -45,7 +60,6 @@ func (h *TicketHandler) GetAll(c *gin.Context) {
 		FlightID:    uint(flightID),
 		PassengerID: uint(passengerID),
 		Status:      c.Query("status"),
-		Class:       c.Query("class"),
 		Page:        page,
 		Limit:       limit,
 	}
@@ -65,46 +79,75 @@ func (h *TicketHandler) GetAll(c *gin.Context) {
 }
 
 func (h *TicketHandler) Create(c *gin.Context) {
-	var ticket models.Ticket
-	if err := c.ShouldBindJSON(&ticket); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	userID, ok := userIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "невалидный токен"})
 		return
 	}
 
-	if err := validateTicket(&ticket); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	if _, err := h.flightRepo.FindByID(ticket.FlightID); err != nil {
+	user, err := h.userRepo.FindWithPassenger(userID)
+	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "рейс не найден"})
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "пользователь не найден"})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	if err := h.flightRepo.DecrementSeat(ticket.FlightID); err != nil {
-		if err.Error() == "мест нет" {
-			c.JSON(http.StatusConflict, gin.H{"error": "мест нет"})
+	if user.PassengerID == nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "заполните профиль пассажира перед покупкой билета"})
+		return
+	}
+
+	var req createTicketRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	seat, err := h.seatRepo.FindByID(req.SeatID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "место не найдено"})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	ticket.Status = "reserved"
-	ticket.BookedAt = time.Now()
+	if seat.FlightID != req.FlightID {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "место не принадлежит указанному рейсу"})
+		return
+	}
+
+	if err := h.seatRepo.BookSeat(req.SeatID); err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
+
+	ticket := models.Ticket{
+		FlightID:    req.FlightID,
+		PassengerID: *user.PassengerID,
+		SeatID:      req.SeatID,
+		Status:      "reserved",
+		BookedAt:    time.Now(),
+	}
 
 	if err := h.ticketRepo.Create(&ticket); err != nil {
-		// откат места если не удалось создать билет
-		_ = h.flightRepo.IncrementSeat(ticket.FlightID)
+		// откат — освобождаем место
+		_ = h.seatRepo.ReleaseSeat(req.SeatID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusCreated, ticket)
+	created, err := h.ticketRepo.FindByID(ticket.ID)
+	if err != nil {
+		c.JSON(http.StatusCreated, ticket)
+		return
+	}
+
+	c.JSON(http.StatusCreated, created)
 }
 
 func (h *TicketHandler) Update(c *gin.Context) {
@@ -125,10 +168,7 @@ func (h *TicketHandler) Update(c *gin.Context) {
 	}
 
 	var input struct {
-		SeatNumber string  `json:"seat_number"`
-		Class      string  `json:"class"`
-		Price      float64 `json:"price"`
-		Status     string  `json:"status"`
+		Status string `json:"status"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -136,22 +176,9 @@ func (h *TicketHandler) Update(c *gin.Context) {
 	}
 
 	existing := oldTicket
-	if input.SeatNumber != "" {
-		existing.SeatNumber = input.SeatNumber
-	}
-	if input.Class != "" {
-		if input.Class != "economy" && input.Class != "business" && input.Class != "first" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "class должен быть economy, business или first"})
-			return
-		}
-		existing.Class = input.Class
-	}
-	if input.Price > 0 {
-		existing.Price = input.Price
-	}
 	if input.Status != "" {
 		if input.Status == "cancelled" && existing.Status != "cancelled" {
-			if err := h.flightRepo.IncrementSeat(existing.FlightID); err != nil {
+			if err := h.seatRepo.ReleaseSeat(existing.SeatID); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
@@ -162,6 +189,7 @@ func (h *TicketHandler) Update(c *gin.Context) {
 	// сбрасываем связанные объекты чтобы Save не пытался их пересоздать
 	existing.Flight = models.Flight{}
 	existing.Passenger = models.Passenger{}
+	existing.Seat = models.Seat{}
 
 	if err := h.ticketRepo.Update(&existing); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -213,7 +241,7 @@ func (h *TicketHandler) Delete(c *gin.Context) {
 	}
 
 	if existing.Status != "cancelled" {
-		if err := h.flightRepo.IncrementSeat(existing.FlightID); err != nil {
+		if err := h.seatRepo.ReleaseSeat(existing.SeatID); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
@@ -225,23 +253,4 @@ func (h *TicketHandler) Delete(c *gin.Context) {
 	}
 
 	c.Status(http.StatusNoContent)
-}
-
-func validateTicket(t *models.Ticket) error {
-	if t.FlightID == 0 {
-		return errors.New("flight_id обязателен")
-	}
-	if t.PassengerID == 0 {
-		return errors.New("passenger_id обязателен")
-	}
-	if t.SeatNumber == "" {
-		return errors.New("seat_number обязателен")
-	}
-	if t.Class != "economy" && t.Class != "business" && t.Class != "first" {
-		return errors.New("class должен быть economy, business или first")
-	}
-	if t.Price <= 0 {
-		return errors.New("price должен быть > 0")
-	}
-	return nil
 }

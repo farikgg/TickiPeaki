@@ -4,6 +4,7 @@ import (
 	"aviation/clients"
 	"aviation/config"
 	"aviation/handlers"
+	"aviation/middleware"
 	"aviation/repository/postgres"
 	"log"
 	"os"
@@ -14,12 +15,17 @@ import (
 func main() {
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
-		dsn = "host=localhost user=postgres password=postgres dbname=aviation port=5432 sslmode=disable"
+		dsn = "host=database user=postgres password=postgres dbname=aviation port=5432 sslmode=disable"
 	}
 
 	pdfServiceURL := os.Getenv("PDF_SERVICE_URL")
 	if pdfServiceURL == "" {
-		pdfServiceURL = "http://localhost:8000"
+		pdfServiceURL = "http://tickets:8000"
+	}
+
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		jwtSecret = "supersecret"
 	}
 
 	db, err := config.Connect(dsn)
@@ -28,31 +34,47 @@ func main() {
 	}
 
 	flightRepo := postgres.NewFlightRepo(db)
+	seatRepo := postgres.NewSeatRepo(db)
 	passengerRepo := postgres.NewPassengerRepo(db)
 	ticketRepo := postgres.NewTicketRepo(db)
+	userRepo := postgres.NewUserRepo(db)
 
 	pdfClient := clients.NewPDFClient(pdfServiceURL)
 
-	flightHandler := handlers.NewFlightHandler(flightRepo)
+	flightHandler := handlers.NewFlightHandler(flightRepo, seatRepo)
 	passengerHandler := handlers.NewPassengerHandler(passengerRepo)
-	ticketHandler := handlers.NewTicketHandler(ticketRepo, flightRepo, pdfClient)
+	ticketHandler := handlers.NewTicketHandler(ticketRepo, flightRepo, seatRepo, userRepo, pdfClient)
+	authHandler := handlers.NewAuthHandler(userRepo, passengerRepo, jwtSecret)
 
 	r := gin.Default()
+	r.Use(middleware.CORS())
 
-	r.GET("/flights", flightHandler.GetAll)
-	r.POST("/flights", flightHandler.Create)
-	r.PUT("/flights/:id", flightHandler.Update)
-	r.DELETE("/flights/:id", flightHandler.Delete)
+	r.POST("/register", authHandler.Register)
+	r.POST("/login", authHandler.Login)
 
-	r.GET("/passengers", passengerHandler.GetAll)
-	r.POST("/passengers", passengerHandler.Create)
-	r.PUT("/passengers/:id", passengerHandler.Update)
-	r.DELETE("/passengers/:id", passengerHandler.Delete)
+	protected := r.Group("/")
+	protected.Use(middleware.Auth(jwtSecret))
+	{
+		protected.GET("/me", authHandler.Me)
+		protected.POST("/me/passenger", authHandler.CreatePassenger)
 
-	r.GET("/tickets", ticketHandler.GetAll)
-	r.POST("/tickets", ticketHandler.Create)
-	r.PUT("/tickets/:id", ticketHandler.Update)
-	r.DELETE("/tickets/:id", ticketHandler.Delete)
+		protected.GET("/flights", flightHandler.GetAll)
+		protected.GET("/flights/:id", flightHandler.GetByID)
+		protected.GET("/flights/:id/seats", flightHandler.ListSeats)
+		protected.POST("/flights", flightHandler.Create)
+		protected.PUT("/flights/:id", flightHandler.Update)
+		protected.DELETE("/flights/:id", flightHandler.Delete)
+
+		protected.GET("/passengers", passengerHandler.GetAll)
+		protected.POST("/passengers", passengerHandler.Create)
+		protected.PUT("/passengers/:id", passengerHandler.Update)
+		protected.DELETE("/passengers/:id", passengerHandler.Delete)
+
+		protected.GET("/tickets", ticketHandler.GetAll)
+		protected.POST("/tickets", ticketHandler.Create)
+		protected.PUT("/tickets/:id", ticketHandler.Update)
+		protected.DELETE("/tickets/:id", ticketHandler.Delete)
+	}
 
 	if err := r.Run(":8080"); err != nil {
 		log.Fatal(err)

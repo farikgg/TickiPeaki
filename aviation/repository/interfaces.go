@@ -8,8 +8,15 @@ type FlightRepository interface {
 	Create(f *models.Flight) error
 	Update(f *models.Flight) error
 	Delete(id uint) error
-	DecrementSeat(id uint) error
-	IncrementSeat(id uint) error
+}
+
+type SeatRepository interface {
+	FindByFlight(flightID uint) ([]models.Seat, error)
+	FindAvailable(flightID uint) ([]models.Seat, error)
+	FindByID(id uint) (models.Seat, error)
+	CreateBatch(seats []models.Seat) error
+	BookSeat(id uint) error
+	ReleaseSeat(id uint) error
 }
 
 type PassengerRepository interface {
@@ -28,6 +35,14 @@ type TicketRepository interface {
 	Delete(id uint) error
 }
 
+type UserRepository interface {
+	FindByUsername(username string) (models.User, error)
+	FindByID(id uint) (models.User, error)
+	Create(u *models.User) error
+	UpdatePassengerID(userID uint, passengerID uint) error
+	FindWithPassenger(userID uint) (models.User, error)
+}
+
 type FlightFilter struct {
 	Origin      string
 	Destination string
@@ -40,7 +55,6 @@ type TicketFilter struct {
 	FlightID    uint
 	PassengerID uint
 	Status      string
-	Class       string
 	Page        int
 	Limit       int
 }

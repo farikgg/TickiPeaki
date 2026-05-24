@@ -31,9 +31,6 @@ func (r *TicketRepo) FindAll(filter repository.TicketFilter) ([]models.Ticket, i
 	if filter.Status != "" {
 		q = q.Where("status = ?", filter.Status)
 	}
-	if filter.Class != "" {
-		q = q.Where("class = ?", filter.Class)
-	}
 
 	err := q.Count(&total).Error
 	if err != nil {
@@ -41,7 +38,7 @@ func (r *TicketRepo) FindAll(filter repository.TicketFilter) ([]models.Ticket, i
 	}
 
 	offset := (filter.Page - 1) * filter.Limit
-	err = q.Preload("Flight").Preload("Passenger").
+	err = q.Preload("Flight").Preload("Passenger").Preload("Seat").
 		Offset(offset).Limit(filter.Limit).Find(&tickets).Error
 	if err != nil {
 		return nil, 0, err
@@ -52,7 +49,8 @@ func (r *TicketRepo) FindAll(filter repository.TicketFilter) ([]models.Ticket, i
 
 func (r *TicketRepo) FindByID(id uint) (models.Ticket, error) {
 	var ticket models.Ticket
-	err := r.db.Preload("Flight").Preload("Passenger").First(&ticket, id).Error
+	err := r.db.Preload("Flight").Preload("Passenger").Preload("Seat").
+		First(&ticket, id).Error
 	return ticket, err
 }
 

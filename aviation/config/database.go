@@ -28,7 +28,9 @@ func Connect(dsn string) (*gorm.DB, error) {
 	}
 
 	if err = db.AutoMigrate(
+		&models.User{},
 		&models.Flight{},
+		&models.Seat{},
 		&models.Passenger{},
 		&models.Ticket{},
 	); err != nil {

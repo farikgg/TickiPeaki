@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -16,30 +15,96 @@ import (
 )
 
 type mockFlightRepo struct {
-	findAll       func(filter repository.FlightFilter) ([]models.Flight, int64, error)
-	findByID      func(id uint) (models.Flight, error)
-	create        func(f *models.Flight) error
-	update        func(f *models.Flight) error
-	delete        func(id uint) error
-	decrementSeat func(id uint) error
-	incrementSeat func(id uint) error
+	findAll  func(repository.FlightFilter) ([]models.Flight, int64, error)
+	findByID func(uint) (models.Flight, error)
+	create   func(*models.Flight) error
+	update   func(*models.Flight) error
+	delete   func(uint) error
 }
 
 func (m *mockFlightRepo) FindAll(f repository.FlightFilter) ([]models.Flight, int64, error) {
+	if m.findAll == nil {
+		return nil, 0, nil
+	}
 	return m.findAll(f)
 }
-func (m *mockFlightRepo) FindByID(id uint) (models.Flight, error) { return m.findByID(id) }
-func (m *mockFlightRepo) Create(f *models.Flight) error           { return m.create(f) }
-func (m *mockFlightRepo) Update(f *models.Flight) error           { return m.update(f) }
-func (m *mockFlightRepo) Delete(id uint) error                    { return m.delete(id) }
-func (m *mockFlightRepo) DecrementSeat(id uint) error             { return m.decrementSeat(id) }
-func (m *mockFlightRepo) IncrementSeat(id uint) error             { return m.incrementSeat(id) }
+func (m *mockFlightRepo) FindByID(id uint) (models.Flight, error) {
+	if m.findByID == nil {
+		return models.Flight{}, nil
+	}
+	return m.findByID(id)
+}
+func (m *mockFlightRepo) Create(f *models.Flight) error {
+	if m.create == nil {
+		return nil
+	}
+	return m.create(f)
+}
+func (m *mockFlightRepo) Update(f *models.Flight) error {
+	if m.update == nil {
+		return nil
+	}
+	return m.update(f)
+}
+func (m *mockFlightRepo) Delete(id uint) error {
+	if m.delete == nil {
+		return nil
+	}
+	return m.delete(id)
+}
 
-func newFlightRouter(repo repository.FlightRepository) *gin.Engine {
+type mockSeatRepo struct {
+	findByFlight  func(uint) ([]models.Seat, error)
+	findAvailable func(uint) ([]models.Seat, error)
+	findByID      func(uint) (models.Seat, error)
+	createBatch   func([]models.Seat) error
+	bookSeat      func(uint) error
+	releaseSeat   func(uint) error
+}
+
+func (m *mockSeatRepo) FindByFlight(id uint) ([]models.Seat, error) {
+	if m.findByFlight == nil {
+		return nil, nil
+	}
+	return m.findByFlight(id)
+}
+func (m *mockSeatRepo) FindAvailable(id uint) ([]models.Seat, error) {
+	if m.findAvailable == nil {
+		return nil, nil
+	}
+	return m.findAvailable(id)
+}
+func (m *mockSeatRepo) FindByID(id uint) (models.Seat, error) {
+	if m.findByID == nil {
+		return models.Seat{}, nil
+	}
+	return m.findByID(id)
+}
+func (m *mockSeatRepo) CreateBatch(seats []models.Seat) error {
+	if m.createBatch == nil {
+		return nil
+	}
+	return m.createBatch(seats)
+}
+func (m *mockSeatRepo) BookSeat(id uint) error {
+	if m.bookSeat == nil {
+		return nil
+	}
+	return m.bookSeat(id)
+}
+func (m *mockSeatRepo) ReleaseSeat(id uint) error {
+	if m.releaseSeat == nil {
+		return nil
+	}
+	return m.releaseSeat(id)
+}
+
+func newFlightRouter(flightRepo repository.FlightRepository, seatRepo repository.SeatRepository) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	h := NewFlightHandler(repo)
+	h := NewFlightHandler(flightRepo, seatRepo)
 	r.GET("/flights", h.GetAll)
+	r.GET("/flights/:id", h.GetByID)
 	r.POST("/flights", h.Create)
 	r.PUT("/flights/:id", h.Update)
 	r.DELETE("/flights/:id", h.Delete)
@@ -47,18 +112,19 @@ func newFlightRouter(repo repository.FlightRepository) *gin.Engine {
 }
 
 func TestFlightList_Success(t *testing.T) {
-	mock := &mockFlightRepo{
+	flightMock := &mockFlightRepo{
 		findAll: func(f repository.FlightFilter) ([]models.Flight, int64, error) {
 			return []models.Flight{
-				{ID: 1, FlightNumber: "KC101", Origin: "ALA", Destination: "NQZ", Carrier: "Air Astana", AvailableSeats: 50, Price: 25000},
-				{ID: 2, FlightNumber: "KC102", Origin: "NQZ", Destination: "ALA", Carrier: "Air Astana", AvailableSeats: 30, Price: 26000},
+				{ID: 1, FlightNumber: "KC-101", Origin: "ALA", Destination: "NQZ", Carrier: "Air Astana"},
+				{ID: 2, FlightNumber: "KC-202", Origin: "NQZ", Destination: "ALA", Carrier: "Air Astana"},
 			}, 2, nil
 		},
 	}
+	seatMock := &mockSeatRepo{}
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/flights", nil)
-	newFlightRouter(mock).ServeHTTP(w, req)
+	req := httptest.NewRequest(http.MethodGet, "/flights?page=1&limit=10", nil)
+	newFlightRouter(flightMock, seatMock).ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
@@ -72,55 +138,64 @@ func TestFlightList_Success(t *testing.T) {
 }
 
 func TestFlightCreate_Success(t *testing.T) {
-	mock := &mockFlightRepo{
+	flightMock := &mockFlightRepo{
 		create: func(f *models.Flight) error {
-			f.ID = 1
+			f.ID = 99
 			return nil
 		},
 	}
+	seatMock := &mockSeatRepo{}
 
-	flight := models.Flight{
-		FlightNumber:   "KC101",
-		Origin:         "ALA",
-		Destination:    "NQZ",
-		Carrier:        "Air Astana",
-		DepartureTime:  time.Now().Add(time.Hour),
-		ArrivalTime:    time.Now().Add(3 * time.Hour),
-		AvailableSeats: 100,
-		Price:          25000,
+	payload := map[string]string{
+		"flight_number":  "KC-999",
+		"origin":         "ALA",
+		"destination":    "NQZ",
+		"carrier":        "Air Astana",
+		"departure_time": "2025-07-01T06:00:00Z",
+		"arrival_time":   "2025-07-01T07:30:00Z",
 	}
-	body, _ := json.Marshal(flight)
+	body, _ := json.Marshal(payload)
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/flights", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	newFlightRouter(mock).ServeHTTP(w, req)
+	newFlightRouter(flightMock, seatMock).ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusCreated, w.Code)
+
+	var resp map[string]interface{}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "KC-999", resp["flight_number"])
 }
 
 func TestFlightCreate_ValidationError(t *testing.T) {
-	mock := &mockFlightRepo{}
+	flightMock := &mockFlightRepo{}
+	seatMock := &mockSeatRepo{}
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/flights", bytes.NewReader([]byte(`{}`)))
 	req.Header.Set("Content-Type", "application/json")
-	newFlightRouter(mock).ServeHTTP(w, req)
+	newFlightRouter(flightMock, seatMock).ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, w.Body.String(), "error")
 }
 
 func TestFlightGetByID_NotFound(t *testing.T) {
-	mock := &mockFlightRepo{
+	flightMock := &mockFlightRepo{
 		findByID: func(id uint) (models.Flight, error) {
 			return models.Flight{}, gorm.ErrRecordNotFound
 		},
 	}
+	seatMock := &mockSeatRepo{
+		findByFlight: func(id uint) ([]models.Seat, error) {
+			return nil, nil
+		},
+	}
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodDelete, "/flights/999", nil)
-	newFlightRouter(mock).ServeHTTP(w, req)
+	req := httptest.NewRequest(http.MethodGet, "/flights/999", nil)
+	newFlightRouter(flightMock, seatMock).ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusNotFound, w.Code)
 	assert.Contains(t, w.Body.String(), "error")

@@ -66,9 +66,9 @@ func (p *PDFClient) RequestGeneration(ticket models.Ticket) error {
 		Carrier:        ticket.Flight.Carrier,
 		PassengerName:  ticket.Passenger.FullName,
 		PassengerEmail: ticket.Passenger.Email,
-		SeatNumber:     ticket.SeatNumber,
-		Class:          ticket.Class,
-		Price:          ticket.Price,
+		SeatNumber:     ticket.Seat.SeatNumber,
+		Class:          ticket.Seat.Class,
+		Price:          ticket.Seat.Price,
 	}
 
 	var result generateResponse

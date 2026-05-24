@@ -6,17 +6,93 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
 type FlightHandler struct {
-	repo repository.FlightRepository
+	repo     repository.FlightRepository
+	seatRepo repository.SeatRepository
 }
 
-func NewFlightHandler(repo repository.FlightRepository) *FlightHandler {
-	return &FlightHandler{repo: repo}
+func NewFlightHandler(repo repository.FlightRepository, seatRepo repository.SeatRepository) *FlightHandler {
+	return &FlightHandler{repo: repo, seatRepo: seatRepo}
+}
+
+type createFlightRequest struct {
+	FlightNumber  string `json:"flight_number"  binding:"required"`
+	Origin        string `json:"origin"         binding:"required"`
+	Destination   string `json:"destination"    binding:"required"`
+	Carrier       string `json:"carrier"        binding:"required"`
+	DepartureTime string `json:"departure_time" binding:"required"`
+	ArrivalTime   string `json:"arrival_time"   binding:"required"`
+}
+
+type flightDetailResponse struct {
+	Flight     models.Flight `json:"flight"`
+	Seats      []models.Seat `json:"seats"`
+	Available  int           `json:"available_count"`
+	TakenSeats []string      `json:"taken_seats"`
+}
+
+func (h *FlightHandler) GetByID(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "невалидный id"})
+		return
+	}
+
+	flight, err := h.repo.FindByID(uint(id))
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "рейс не найден"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	seats, err := h.seatRepo.FindByFlight(uint(id))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	takenSeats := []string{}
+	available := 0
+	for _, s := range seats {
+		if s.Status == "booked" {
+			takenSeats = append(takenSeats, s.SeatNumber)
+		}
+		if s.Status == "available" {
+			available++
+		}
+	}
+
+	c.JSON(http.StatusOK, flightDetailResponse{
+		Flight:     flight,
+		Seats:      seats,
+		Available:  available,
+		TakenSeats: takenSeats,
+	})
+}
+
+func (h *FlightHandler) ListSeats(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "невалидный id"})
+		return
+	}
+
+	seats, err := h.seatRepo.FindAvailable(uint(id))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": seats})
 }
 
 func (h *FlightHandler) GetAll(c *gin.Context) {
@@ -52,10 +128,30 @@ func (h *FlightHandler) GetAll(c *gin.Context) {
 }
 
 func (h *FlightHandler) Create(c *gin.Context) {
-	var flight models.Flight
-	if err := c.ShouldBindJSON(&flight); err != nil {
+	var req createFlightRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+
+	dep, err := time.Parse(time.RFC3339, req.DepartureTime)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "departure_time должен быть в формате RFC3339"})
+		return
+	}
+	arr, err := time.Parse(time.RFC3339, req.ArrivalTime)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "arrival_time должен быть в формате RFC3339"})
+		return
+	}
+
+	flight := models.Flight{
+		FlightNumber:  req.FlightNumber,
+		Origin:        req.Origin,
+		Destination:   req.Destination,
+		Carrier:       req.Carrier,
+		DepartureTime: dep,
+		ArrivalTime:   arr,
 	}
 
 	if err := validateFlight(&flight); err != nil {
@@ -157,12 +253,6 @@ func validateFlight(f *models.Flight) error {
 	}
 	if !f.DepartureTime.Before(f.ArrivalTime) {
 		return errors.New("departure_time должен быть раньше arrival_time")
-	}
-	if f.AvailableSeats < 1 {
-		return errors.New("available_seats должен быть >= 1")
-	}
-	if f.Price <= 0 {
-		return errors.New("price должен быть > 0")
 	}
 	return nil
 }
