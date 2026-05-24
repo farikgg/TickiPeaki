@@ -1,11 +1,4 @@
 export default function FlightCard({ flight, onSelect }) {
-  const seats = flight.available_seats ?? flight.seats_available ?? 0
-  const seatBadge = seats > 5
-    ? { cls: 'bg-emerald-50 text-emerald-600', text: `${seats} мест свободно` }
-    : seats > 0
-    ? { cls: 'bg-amber-50 text-amber-600', text: `Осталось ${seats}` }
-    : { cls: 'bg-rose-50 text-rose-500', text: 'Мест нет' }
-
   const dep = flight.departure_time ? new Date(flight.departure_time) : null
   const arr = flight.arrival_time ? new Date(flight.arrival_time) : null
 
@@ -56,22 +49,13 @@ export default function FlightCard({ flight, onSelect }) {
         </div>
       </div>
 
-      <div className="border-t border-gray-100 mt-4 pt-4 flex justify-between items-center">
-        <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${seatBadge.cls}`}>
-          {seatBadge.text}
-        </span>
-        <div className="flex items-center gap-4">
-          <div className="text-2xl font-bold text-[#FF6D00]">
-            {flight.price ?? 0} ₸
-          </div>
-          <button
-            onClick={onSelect}
-            disabled={seats === 0}
-            className="bg-[#FF6D00] hover:bg-orange-600 text-white rounded-xl px-5 py-2 text-sm font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Выбрать
-          </button>
-        </div>
+      <div className="border-t border-gray-100 mt-4 pt-4 flex justify-end items-center">
+        <button
+          onClick={onSelect}
+          className="bg-[#FF6D00] text-white rounded-xl px-4 py-2 text-sm font-semibold hover:bg-orange-600 transition"
+        >
+          Смотреть места →
+        </button>
       </div>
     </div>
   )

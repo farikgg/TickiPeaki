@@ -30,11 +30,16 @@ api.interceptors.response.use(
 export const login = (data) => api.post('/login', data)
 export const register = (data) => api.post('/register', data)
 
+export const getMe = () => api.get('/me')
+export const createPassengerProfile = (data) => api.post('/me/passenger', data)
+
 export const getFlights = (params) => api.get('/flights', { params })
 export const getFlightById = (id) => api.get(`/flights/${id}`)
+export const getFlightSeats = (flightId) => api.get(`/flights/${flightId}/seats`)
 
 export const getTickets = (params) => api.get('/tickets', { params })
 export const createTicket = (data) => api.post('/tickets', data)
 export const updateTicket = (id, data) => api.put(`/tickets/${id}`, data)
+export const payTicket = (id) => api.post(`/tickets/${id}/pay`)
 
 export default api

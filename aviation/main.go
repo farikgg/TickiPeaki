@@ -20,7 +20,7 @@ func main() {
 
 	pdfServiceURL := os.Getenv("PDF_SERVICE_URL")
 	if pdfServiceURL == "" {
-		pdfServiceURL = "http://tickets:8000"
+		pdfServiceURL = "http://localhost:8000"
 	}
 
 	jwtSecret := os.Getenv("JWT_SECRET")
@@ -42,6 +42,7 @@ func main() {
 	pdfClient := clients.NewPDFClient(pdfServiceURL)
 
 	flightHandler := handlers.NewFlightHandler(flightRepo, seatRepo)
+	seatHandler := handlers.NewSeatHandler(seatRepo, flightRepo)
 	passengerHandler := handlers.NewPassengerHandler(passengerRepo)
 	ticketHandler := handlers.NewTicketHandler(ticketRepo, flightRepo, seatRepo, userRepo, pdfClient)
 	authHandler := handlers.NewAuthHandler(userRepo, passengerRepo, jwtSecret)
@@ -60,10 +61,15 @@ func main() {
 
 		protected.GET("/flights", flightHandler.GetAll)
 		protected.GET("/flights/:id", flightHandler.GetByID)
-		protected.GET("/flights/:id/seats", flightHandler.ListSeats)
 		protected.POST("/flights", flightHandler.Create)
 		protected.PUT("/flights/:id", flightHandler.Update)
 		protected.DELETE("/flights/:id", flightHandler.Delete)
+
+		protected.GET("/flights/:id/seats", seatHandler.ListByFlight)
+		protected.GET("/seats/:id", seatHandler.GetByID)
+		protected.POST("/seats", seatHandler.Create)
+		protected.PUT("/seats/:id", seatHandler.Update)
+		protected.DELETE("/seats/:id", seatHandler.Delete)
 
 		protected.GET("/passengers", passengerHandler.GetAll)
 		protected.POST("/passengers", passengerHandler.Create)
@@ -73,6 +79,7 @@ func main() {
 		protected.GET("/tickets", ticketHandler.GetAll)
 		protected.POST("/tickets", ticketHandler.Create)
 		protected.PUT("/tickets/:id", ticketHandler.Update)
+		protected.POST("/tickets/:id/pay", ticketHandler.Pay)
 		protected.DELETE("/tickets/:id", ticketHandler.Delete)
 	}
 

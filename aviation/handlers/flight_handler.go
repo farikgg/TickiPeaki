@@ -79,22 +79,6 @@ func (h *FlightHandler) GetByID(c *gin.Context) {
 	})
 }
 
-func (h *FlightHandler) ListSeats(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "невалидный id"})
-		return
-	}
-
-	seats, err := h.seatRepo.FindAvailable(uint(id))
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"data": seats})
-}
-
 func (h *FlightHandler) GetAll(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))

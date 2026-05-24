@@ -8,11 +8,33 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
+
+var reservationTimers = struct {
+	sync.Mutex
+	timers map[uint]*time.Timer
+}{timers: make(map[uint]*time.Timer)}
+
+func startReservationTimer(ticketID uint, cancelFn func()) {
+	t := time.AfterFunc(5*time.Minute, cancelFn)
+	reservationTimers.Lock()
+	reservationTimers.timers[ticketID] = t
+	reservationTimers.Unlock()
+}
+
+func cancelReservationTimer(ticketID uint) {
+	reservationTimers.Lock()
+	if t, ok := reservationTimers.timers[ticketID]; ok {
+		t.Stop()
+		delete(reservationTimers.timers, ticketID)
+	}
+	reservationTimers.Unlock()
+}
 
 type TicketHandler struct {
 	ticketRepo repository.TicketRepository
@@ -135,11 +157,23 @@ func (h *TicketHandler) Create(c *gin.Context) {
 	}
 
 	if err := h.ticketRepo.Create(&ticket); err != nil {
-		// откат — освобождаем место
 		_ = h.seatRepo.ReleaseSeat(req.SeatID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	startReservationTimer(ticket.ID, func() {
+		// автоматическая отмена через 5 минут
+		ticket.Status = "cancelled"
+		if err := h.ticketRepo.Update(&ticket); err != nil {
+			log.Printf("не смогли отменить билет %d: %v", ticket.ID, err)
+			return
+		}
+		if err := h.seatRepo.ReleaseSeat(ticket.SeatID); err != nil {
+			log.Printf("не смогли освободить место %d: %v", ticket.SeatID, err)
+		}
+		log.Printf("билет %d отменён автоматически — время оплаты истекло", ticket.ID)
+	})
 
 	created, err := h.ticketRepo.FindByID(ticket.ID)
 	if err != nil {
@@ -178,6 +212,7 @@ func (h *TicketHandler) Update(c *gin.Context) {
 	existing := oldTicket
 	if input.Status != "" {
 		if input.Status == "cancelled" && existing.Status != "cancelled" {
+			cancelReservationTimer(existing.ID)
 			if err := h.seatRepo.ReleaseSeat(existing.SeatID); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
@@ -202,7 +237,8 @@ func (h *TicketHandler) Update(c *gin.Context) {
 		return
 	}
 
-	if input.Status == "paid" && oldTicket.Status != "paid" {
+	if input.Status == "paid" && oldTicket.Status == "reserved" {
+		cancelReservationTimer(updatedTicket.ID)
 		clients.StartPDFWorker(
 			h.pdfClient,
 			updatedTicket,
@@ -219,6 +255,81 @@ func (h *TicketHandler) Update(c *gin.Context) {
 			},
 		)
 	}
+
+	c.JSON(http.StatusOK, updatedTicket)
+}
+
+func (h *TicketHandler) Pay(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "некорректный id"})
+		return
+	}
+
+	userID, ok := userIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "невалидный токен"})
+		return
+	}
+
+	ticket, err := h.ticketRepo.FindByID(uint(id))
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "билет не найден"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	user, err := h.userRepo.FindWithPassenger(userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if user.PassengerID == nil || *user.PassengerID != ticket.PassengerID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "доступ запрещён"})
+		return
+	}
+
+	if ticket.Status != "reserved" {
+		c.JSON(http.StatusConflict, gin.H{"error": "билет уже оплачен или отменён"})
+		return
+	}
+
+	cancelReservationTimer(ticket.ID)
+
+	ticket.Status = "paid"
+	ticket.Flight = models.Flight{}
+	ticket.Passenger = models.Passenger{}
+	ticket.Seat = models.Seat{}
+
+	if err := h.ticketRepo.Update(&ticket); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	updatedTicket, err := h.ticketRepo.FindByID(uint(id))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	clients.StartPDFWorker(
+		h.pdfClient,
+		updatedTicket,
+		func(pdfURL string) {
+			updatedTicket.PDFURL = &pdfURL
+			if err := h.ticketRepo.Update(&updatedTicket); err != nil {
+				log.Printf("не смогли сохранить pdf_url для билета %d: %v", updatedTicket.ID, err)
+				return
+			}
+			log.Printf("PDF для билета %d сохранён: %s", updatedTicket.ID, pdfURL)
+		},
+		func(err error) {
+			log.Printf("ошибка генерации PDF для билета %d: %v", updatedTicket.ID, err)
+		},
+	)
 
 	c.JSON(http.StatusOK, updatedTicket)
 }

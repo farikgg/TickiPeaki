@@ -14,6 +14,7 @@ class S3StorageService:
         self.endpoint_url: str = s3_settings.endpoint_url
         self.secret_key: str = s3_settings.secret_key
         self.session: Session = Session()
+        self.public_url: str = s3_settings.s3_public_url
 
     async def upload_file(self, file: bytes, filename: str):
         async with self.session.client(
@@ -42,5 +43,6 @@ class S3StorageService:
                     detail="Ошибка с клиентом S3",
                     filename=filename
                 )
+        url = response.replace(self.endpoint_url, self.public_url)
 
-        return response
+        return url

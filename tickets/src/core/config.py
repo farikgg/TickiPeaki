@@ -39,6 +39,7 @@ class AppSettings(_ProjectBaseSettings):
     access_key: str = Field(..., alias="S3_ACCESS_KEY")
     secret_key: str = Field(..., alias="S3_SECRET_KEY")
     bucket: str = Field(..., alias="S3_BUCKET")
+    s3_public_url: str = Field(..., alias="S3_PUBLIC_URL")
 
 @lru_cache
 def get_settings() -> AppSettings:

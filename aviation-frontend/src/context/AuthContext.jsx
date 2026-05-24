@@ -1,4 +1,5 @@
-import { createContext, useContext, useState } from 'react'
+import { createContext, useContext, useState, useEffect, useCallback } from 'react'
+import { getMe } from '../api/client.js'
 
 const AuthContext = createContext(null)
 
@@ -28,6 +29,26 @@ export function AuthProvider({ children }) {
     const raw = localStorage.getItem('sky_user')
     try { return raw ? JSON.parse(raw) : null } catch { return null }
   })
+  const [passenger, setPassenger] = useState(null)
+
+  const fetchMe = useCallback(async () => {
+    try {
+      const res = await getMe()
+      setPassenger(res.data?.passenger ?? null)
+      return res.data
+    } catch {
+      setPassenger(null)
+      return null
+    }
+  }, [])
+
+  useEffect(() => {
+    if (token) {
+      fetchMe()
+    } else {
+      setPassenger(null)
+    }
+  }, [token, fetchMe])
 
   const login = (newToken) => {
     const payload = parseJWT(newToken)
@@ -45,11 +66,18 @@ export function AuthProvider({ children }) {
     localStorage.removeItem('sky_user')
     setToken(null)
     setUser(null)
+    setPassenger(null)
   }
+
+  const hasPassenger = !!passenger
 
   const value = {
     token,
     user,
+    passenger,
+    hasPassenger,
+    fetchMe,
+    setPassenger,
     login,
     logout,
     isAuthenticated: !!token,

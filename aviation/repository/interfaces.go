@@ -15,6 +15,8 @@ type SeatRepository interface {
 	FindAvailable(flightID uint) ([]models.Seat, error)
 	FindByID(id uint) (models.Seat, error)
 	CreateBatch(seats []models.Seat) error
+	Update(s *models.Seat) error
+	Delete(id uint) error
 	BookSeat(id uint) error
 	ReleaseSeat(id uint) error
 }

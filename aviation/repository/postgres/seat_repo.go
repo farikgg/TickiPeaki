@@ -44,6 +44,14 @@ func (r *SeatRepo) CreateBatch(seats []models.Seat) error {
 	return r.db.Create(&seats).Error
 }
 
+func (r *SeatRepo) Update(s *models.Seat) error {
+	return r.db.Save(s).Error
+}
+
+func (r *SeatRepo) Delete(id uint) error {
+	return r.db.Delete(&models.Seat{}, id).Error
+}
+
 // атомарный апдейт — иначе будет гонка
 func (r *SeatRepo) BookSeat(id uint) error {
 	result := r.db.Model(&models.Seat{}).

@@ -66,9 +66,9 @@ export default function RegisterPage() {
     <div className="max-w-md mx-auto mt-12 md:mt-16">
       <div className="bg-white rounded-2xl shadow-md p-8">
         <div className="text-center mb-8">
-          <div className="text-4xl mb-2 text-[#FF6D00]">✈</div>
-          <h1 className="text-2xl font-bold text-gray-900">Создать аккаунт</h1>
-          <p className="text-gray-500 text-sm mt-1">Присоединяйтесь к SkyBook</p>
+          <div className="text-4xl mb-2 text-[#FF6D00]">🎫</div>
+          <h1 className="text-2xl font-bold text-gray-900">Создать аккаунт в TickiPeaki</h1>
+          <p className="text-gray-500 text-sm mt-1">Присоединяйтесь к TickiPeaki</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">

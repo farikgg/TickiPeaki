@@ -1,17 +1,30 @@
 # TickiPeaki
 
-REST API для бронирования авиабилетов. Go + Gin + GORM + PostgreSQL.
-PDF-билеты генерируются отдельным Python-сервисом, который вызывается из Go через Resty.
+Микросервисная система бронирования авиабилетов.
+
+- **aviation** — Go + Gin + GORM + PostgreSQL, REST API с JWT-аутентификацией
+- **tickets** — Python FastAPI, генерация PDF-билетов
+- **aviation-frontend** — React + Vite + Tailwind, UI в стиле Aviasales
+- **database** — PostgreSQL 15
+- **minio** — S3-совместимое хранилище для PDF
+- **redis** — кэш
 
 ## Архитектура
 
 ```
-aviation/ (Go :8080)               db/ (PostgreSQL :5432)
-    └── PUT /tickets/:id (status→paid)
-            └── clients.PDFClient.GenerateTicket()
-                    └── POST http://pdf-service:8000/generate-ticket
-                            └── tickets/ (Python FastAPI :8000)
+aviation-frontend (:5173)
+        │
+        ▼
+aviation (Go :8080) ──────────► database (Postgres :5432)
+        │
+        │  PUT /tickets/:id  (status → paid)
+        ▼
+tickets (Python FastAPI :8000) ──► minio (:9000)
 ```
+
+При смене статуса билета на `paid` Go-сервис асинхронно вызывает
+`POST {PDF_SERVICE_URL}/generate-ticket`. PDF загружается в MinIO,
+ссылка сохраняется в поле `pdf_url` билета.
 
 ## Требования
 
@@ -19,7 +32,8 @@ aviation/ (Go :8080)               db/ (PostgreSQL :5432)
 
 Локальный запуск без Docker (опционально):
 - Go 1.23+
-- PostgreSQL
+- Node 20+
+- PostgreSQL 15
 
 ## Запуск через Docker
 
@@ -27,16 +41,19 @@ aviation/ (Go :8080)               db/ (PostgreSQL :5432)
 docker-compose up --build
 ```
 
-Поднимутся три сервиса:
+| Сервис    | Порт        | Описание                           |
+|-----------|-------------|------------------------------------|
+| frontend  | 5173        | React UI (nginx)                   |
+| aviation  | 8080        | Go API (Gin + GORM)                |
+| tickets   | 8000        | Python FastAPI, генерация PDF      |
+| database  | 5432        | PostgreSQL 15                      |
+| minio     | 9000 / 9001 | S3 (API / web-консоль)             |
+| redis     | 6379        | Кэш                                |
 
-| Сервис      | Порт | Описание                       |
-|-------------|------|--------------------------------|
-| aviation    | 8080 | Go API (Gin + GORM)            |
-| pdf-service | 8000 | Python FastAPI, генерация PDF  |
-| db          | 5432 | PostgreSQL 15                  |
+Все сервисы в общей сети `aviation-net`. Данные БД — в volume `postgres_data`,
+объекты MinIO — в `minio_data`. `aviation` стартует после healthcheck postgres.
 
-Все сервисы в общей сети `aviation-net`. БД хранится в volume `postgres_data`.
-`aviation` стартует только после healthcheck postgres.
+Конфигурация сервисов берётся из `aviation/.env` и `tickets/.env`.
 
 Остановка с очисткой данных:
 
@@ -46,11 +63,11 @@ docker-compose down -v
 
 ## Переменные окружения (aviation)
 
-| Переменная        | По умолчанию                                                                  |
-|-------------------|-------------------------------------------------------------------------------|
-| `DATABASE_URL`    | `host=db user=postgres password=postgres dbname=aviation port=5432 sslmode=disable` |
-| `PDF_SERVICE_URL` | `http://pdf-service:8000`                                                     |
-| `JWT_SECRET`      | `supersecret`                                                                 |
+| Переменная        | По умолчанию                                                                          |
+|-------------------|---------------------------------------------------------------------------------------|
+| `DATABASE_URL`    | `host=database user=postgres password=postgres dbname=aviation port=5432 sslmode=disable` |
+| `PDF_SERVICE_URL` | `http://tickets:8000`                                                                 |
+| `JWT_SECRET`      | `supersecret`                                                                         |
 
 ## Локальный запуск без Docker
 
@@ -60,82 +77,62 @@ go mod tidy
 go run main.go
 ```
 
-Сервер стартует на `http://localhost:8080`. По умолчанию подключается к `localhost:5432`,
-БД `aviation`, пользователь `postgres`, пароль `postgres`.
-
 ```bash
-DATABASE_URL="host=localhost user=myuser password=mypass dbname=aviation port=5432 sslmode=disable" \
-PDF_SERVICE_URL="http://localhost:8000" \
-go run main.go
+cd aviation-frontend
+npm install
+npm run dev
 ```
 
-## Эндпоинты
+API на `http://localhost:8080`, фронт на `http://localhost:5173`.
 
-### Рейсы (`/flights`)
+## Миграции
 
-| Метод  | Путь         | Описание       |
-|--------|--------------|----------------|
-| GET    | /flights     | Список рейсов  |
-| POST   | /flights     | Создать рейс   |
-| PUT    | /flights/:id | Обновить рейс  |
-| DELETE | /flights/:id | Удалить рейс   |
+SQL-миграции лежат в `aviation/migrations/`. Последняя — `000006_add_seats_refactor`:
+выносит места в отдельную таблицу `seats`, убирает `price` и `available_seats`
+из таблицы `flights`. `000005_seed_data` наполняет БД тестовыми данными.
 
-Фильтры: `?origin=`, `?destination=`, `?carrier=`, `?page=`, `?limit=`
+## Доменная модель
 
-### Пассажиры (`/passengers`)
+- **User** — учётка с username/password (bcrypt) и ролью (`user` / `admin`).
+  Может иметь связанный профиль пассажира.
+- **Passenger** — анкета пассажира (ФИО, email, телефон, паспорт).
+- **Flight** — рейс. Хранит маршрут и время. **Не хранит цену и количество мест.**
+- **Seat** — место на рейсе. Хранит `seat_number`, `class`, `price`, `status`
+  (`available` / `booked`). Цена привязана к месту, а не к рейсу.
+- **Ticket** — билет. Привязывает `Passenger` к `Seat` конкретного `Flight`.
+  Статус: `reserved` / `paid` / `cancelled`. После `paid` появляется `pdf_url`.
 
-| Метод  | Путь            | Описание           |
-|--------|-----------------|--------------------|
-| GET    | /passengers     | Список пассажиров  |
-| POST   | /passengers     | Создать пассажира  |
-| PUT    | /passengers/:id | Обновить пассажира |
-| DELETE | /passengers/:id | Удалить пассажира  |
+## Аутентификация
 
-Фильтры: `?page=`, `?limit=`
+Защищённые маршруты требуют заголовок `Authorization: Bearer <token>`.
+Токен — JWT (HS256), payload `{ user_id, username, role, exp }`, срок 24 часа.
 
-### Билеты (`/tickets`)
+### Регистрация — POST `/register`
 
-| Метод  | Путь         | Описание            |
-|--------|--------------|---------------------|
-| GET    | /tickets     | Список билетов      |
-| POST   | /tickets     | Забронировать билет |
-| PUT    | /tickets/:id | Обновить билет      |
-| DELETE | /tickets/:id | Удалить билет       |
+```json
+{ "username": "ivan", "password": "secret123" }
+```
 
-Фильтры: `?flight_id=`, `?passenger_id=`, `?status=`, `?class=`, `?page=`, `?limit=`
+### Логин — POST `/login`
 
-## Интеграция с pdf-service
+```json
+{ "username": "ivan", "password": "secret123" }
+```
 
-При обновлении билета через `PUT /tickets/:id` со статусом `paid` (если предыдущий
-статус был не `paid`) Go-сервис вызывает `POST {PDF_SERVICE_URL}/generate-ticket`
-через Resty v2. Hooks `OnBeforeRequest` / `OnAfterResponse` логируют метод, URL и
-статус ответа.
-
-Если pdf-service недоступен — основной запрос не падает, ошибка только пишется в лог.
-Билет к этому моменту уже сохранён в БД.
-
-## Тестирование через Postman
-
-Базовый URL: `http://localhost:8080`
-
-Для всех POST/PUT запросов: Headers -> `Content-Type: application/json`
-
-### Создать рейс — POST `/flights`
+Ответ:
 
 ```json
 {
-  "flight_number": "KC301",
-  "origin": "ALA",
-  "destination": "NQZ",
-  "carrier": "Air Astana",
-  "departure_time": "2026-04-01T08:00:00Z",
-  "arrival_time": "2026-04-01T09:30:00Z",
-  "available_seats": 120,
-  "price": 25000
+  "token": "eyJhbGciOi...",
+  "user": { "id": 1, "username": "ivan", "role": "user" }
 }
 ```
 
-### Создать пассажира — POST `/passengers`
+### Профиль — GET `/me`
+
+Возвращает пользователя вместе с привязанным `Passenger` (если есть).
+
+### Заполнить пассажира — POST `/me/passenger`
 
 ```json
 {
@@ -146,50 +143,150 @@ go run main.go
 }
 ```
 
-### Забронировать билет — POST `/tickets`
+Без заполненного профиля покупка билета вернёт `403`.
+
+## Эндпоинты
+
+Все маршруты ниже требуют JWT.
+
+### Рейсы (`/flights`)
+
+| Метод  | Путь          | Описание                       |
+|--------|---------------|--------------------------------|
+| GET    | /flights      | Список рейсов                  |
+| GET    | /flights/:id  | Рейс + все его места + сводка  |
+| POST   | /flights      | Создать рейс                   |
+| PUT    | /flights/:id  | Обновить рейс                  |
+| DELETE | /flights/:id  | Удалить рейс                   |
+
+Фильтры списка: `?origin=`, `?destination=`, `?carrier=`, `?page=`, `?limit=`
+
+`GET /flights/:id` отдаёт:
+
+```json
+{
+  "flight": { "id": 1, "flight_number": "KC-101", "origin": "ALA", ... },
+  "seats": [
+    { "id": 1, "seat_number": "1A", "class": "first",   "price": 55000, "status": "available" },
+    { "id": 5, "seat_number": "6A", "class": "economy", "price": 25000, "status": "booked" }
+  ],
+  "available_count": 45,
+  "taken_seats": ["6A", "6B"]
+}
+```
+
+### Места (`/seats`)
+
+| Метод  | Путь                | Описание                                     |
+|--------|---------------------|----------------------------------------------|
+| GET    | /flights/:id/seats  | Все места рейса (`{ data: [...], total }`)   |
+| GET    | /seats/:id          | Одно место                                   |
+| POST   | /seats              | Создать место                                |
+| PUT    | /seats/:id          | Обновить `price` / `status` (patch-style)    |
+| DELETE | /seats/:id          | Удалить место (нельзя, если `booked`)        |
+
+### Пассажиры (`/passengers`)
+
+| Метод  | Путь            | Описание           |
+|--------|-----------------|--------------------|
+| GET    | /passengers     | Список пассажиров  |
+| POST   | /passengers     | Создать пассажира  |
+| PUT    | /passengers/:id | Обновить пассажира |
+| DELETE | /passengers/:id | Удалить пассажира  |
+
+### Билеты (`/tickets`)
+
+| Метод  | Путь         | Описание                                      |
+|--------|--------------|-----------------------------------------------|
+| GET    | /tickets     | Список билетов                                |
+| POST   | /tickets     | Забронировать билет (passenger из JWT)        |
+| PUT    | /tickets/:id | Сменить статус билета                         |
+| DELETE | /tickets/:id | Удалить билет (освобождает место)             |
+
+Фильтры списка: `?flight_id=`, `?passenger_id=`, `?status=`, `?page=`, `?limit=`
+
+## Примеры запросов
+
+### Создать рейс — POST `/flights`
+
+```json
+{
+  "flight_number": "KC301",
+  "origin": "ALA",
+  "destination": "NQZ",
+  "carrier": "Air Astana",
+  "departure_time": "2026-04-01T08:00:00Z",
+  "arrival_time": "2026-04-01T09:30:00Z"
+}
+```
+
+Места создаются отдельно (через миграции/seed или `POST /seats`) и привязываются к `flight_id`.
+
+### Создать место — POST `/seats`
 
 ```json
 {
   "flight_id": 1,
-  "passenger_id": 1,
   "seat_number": "12A",
   "class": "economy",
   "price": 25000
 }
 ```
 
-Допустимые значения `class`: `economy`, `business`, `first`
+Допустимые значения `class`: `economy`, `business`, `first`. `price` должна быть `> 0`.
+Новое место получает статус `available`. Дубль `seat_number` в рамках одного рейса — `409`.
 
-При бронировании `available_seats` рейса уменьшается на 1. Если мест нет — `409`.
+### Обновить место — PUT `/seats/:id`
 
-### Обновить билет — PUT `/tickets/1`
+```json
+{ "price": 27000, "status": "available" }
+```
+
+Patch-style: передавайте только те поля, которые нужно изменить. Допустимый
+`status` — `available` или `booked`.
+
+### Забронировать билет — POST `/tickets`
 
 ```json
 {
-  "seat_number": "12A",
-  "class": "business",
-  "price": 45000,
-  "status": "paid"
+  "flight_id": 1,
+  "seat_id": 3
 }
 ```
 
-Допустимые значения `status`: `reserved`, `paid`, `cancelled`
+`passenger_id` берётся из JWT автоматически. Если у пользователя нет профиля
+пассажира — `403`. Если место уже забронировано — `409`.
 
-При смене статуса на `paid` запускается генерация PDF в pdf-service.
-При смене статуса на `cancelled` место на рейсе освобождается.
+Ответ:
 
-### GET-запросы с фильтрами
-
+```json
+{
+  "id": 1,
+  "flight_id": 1,
+  "seat_id": 3,
+  "seat": {
+    "id": 3,
+    "seat_number": "3A",
+    "class": "business",
+    "price": 35000,
+    "status": "booked"
+  },
+  "status": "reserved",
+  "booked_at": "2026-04-01T07:15:00Z"
+}
 ```
-GET /flights?origin=ALA&destination=NQZ
-GET /flights?carrier=Air%20Astana&page=1&limit=5
 
-GET /passengers?page=1&limit=10
+### Сменить статус — PUT `/tickets/:id`
 
-GET /tickets?flight_id=1
-GET /tickets?status=reserved&class=economy
-GET /tickets?passenger_id=1&page=1&limit=10
+```json
+{ "status": "paid" }
 ```
+
+Допустимые значения: `reserved`, `paid`, `cancelled`.
+
+- `paid` — асинхронно запускается генерация PDF в `tickets`. После успеха
+  поле `pdf_url` билета обновляется.
+- `cancelled` — место освобождается (`status` → `available`).
 
 ### Удаление
 
@@ -199,42 +296,68 @@ DELETE /passengers/1
 DELETE /tickets/1
 ```
 
-Возвращает `204 No Content` при успехе.
+`204 No Content` при успехе. При удалении билета со статусом, отличным от
+`cancelled`, место на рейсе освобождается. Пассажира с активными билетами
+удалить нельзя — `409`.
 
-Удаление пассажира с активными билетами вернёт `409`.
+## Интеграция с tickets (PDF)
 
-При удалении билета со статусом, отличным от `cancelled`, место на рейсе освобождается.
+При `PUT /tickets/:id` со сменой статуса на `paid` запускается воркер,
+который через Resty v2 вызывает `POST {PDF_SERVICE_URL}/generate-ticket`.
+PDF загружается в MinIO, ссылка сохраняется в `pdf_url` билета. Hooks
+`OnBeforeRequest` / `OnAfterResponse` пишут метод, URL и статус в лог.
+
+Если `tickets` недоступен — основной запрос не падает, ошибка только в логе.
+Билет к этому моменту уже сохранён в БД, можно повторить смену статуса позже.
 
 ## Структура
 
 ```
 .
 ├── docker-compose.yaml
-├── aviation/                 # Go API
+├── aviation/                       # Go API
 │   ├── Dockerfile
 │   ├── .dockerignore
 │   ├── main.go
 │   ├── config/
 │   │   └── database.go
+│   ├── middleware/
+│   │   ├── auth.go                 # JWT-мидлварь
+│   │   └── cors.go
+│   ├── migrations/                 # SQL-миграции (golang-migrate)
 │   ├── models/
 │   │   ├── flight.go
+│   │   ├── seat.go
 │   │   ├── passenger.go
-│   │   └── ticket.go
+│   │   ├── ticket.go
+│   │   └── user.go
 │   ├── repository/
 │   │   ├── interfaces.go
 │   │   └── postgres/
 │   │       ├── flight_repo.go
+│   │       ├── seat_repo.go
 │   │       ├── passenger_repo.go
-│   │       └── ticket_repo.go
+│   │       ├── ticket_repo.go
+│   │       └── user_repo.go
 │   ├── handlers/
+│   │   ├── auth_handler.go
 │   │   ├── flight_handler.go
 │   │   ├── passenger_handler.go
 │   │   └── ticket_handler.go
 │   └── clients/
-│       └── pdf_client.go     # Resty-клиент к pdf-service
-└── tickets/                  # Python FastAPI, генерация PDF
+│       └── pdf_client.go           # Resty-клиент к tickets
+├── tickets/                        # Python FastAPI, генерация PDF
+│   ├── Dockerfile
+│   ├── pyproject.toml
+│   ├── src/
+│   └── templates/
+└── aviation-frontend/              # React + Vite + Tailwind
     ├── Dockerfile
-    ├── pyproject.toml
-    ├── src/
-    └── templates/
+    ├── nginx.conf
+    ├── package.json
+    └── src/
+        ├── api/
+        ├── components/
+        ├── context/
+        └── pages/
 ```

@@ -3,7 +3,7 @@ import { NavLink, Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext.jsx'
 
 export default function Navbar() {
-  const { isAuthenticated, user, logout } = useAuth()
+  const { isAuthenticated, user, logout, hasPassenger } = useAuth()
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
 
@@ -18,12 +18,13 @@ export default function Navbar() {
       ? 'text-[#FF6D00] font-semibold'
       : 'text-gray-600 hover:text-[#FF6D00] transition'
 
+  const showDot = isAuthenticated && !hasPassenger
+
   return (
     <header className="sticky top-0 z-50 bg-white border-b border-gray-100 shadow-sm">
       <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
         <Link to="/" className="flex items-center gap-2 text-xl font-bold text-[#FF6D00]">
-          <span>✈</span>
-          <span>SkyBook</span>
+          <span>TickiPeaki</span>
         </Link>
 
         <nav className="hidden md:flex items-center gap-8">
@@ -40,9 +41,14 @@ export default function Navbar() {
               </span>
               <Link
                 to="/profile"
-                className="px-4 py-2 rounded-xl bg-[#FF6D00] hover:bg-orange-600 text-white text-sm font-semibold transition"
+                className="relative px-4 py-2 rounded-xl bg-[#FF6D00] hover:bg-orange-600 text-white text-sm font-semibold transition"
               >
-                Личный кабинет
+                <span className="relative">
+                  Личный кабинет
+                  {showDot && (
+                    <span className="absolute -top-1 -right-3 w-2 h-2 bg-[#FF6D00] rounded-full animate-pulse ring-2 ring-white" />
+                  )}
+                </span>
               </Link>
               <button
                 onClick={handleLogout}
@@ -91,9 +97,14 @@ export default function Navbar() {
               <Link
                 to="/profile"
                 onClick={() => setOpen(false)}
-                className="bg-[#FF6D00] text-white px-4 py-2 rounded-xl text-center font-semibold"
+                className="bg-[#FF6D00] text-white px-4 py-2 rounded-xl text-center font-semibold relative"
               >
-                Личный кабинет
+                <span className="relative">
+                  Личный кабинет
+                  {showDot && (
+                    <span className="absolute -top-1 -right-3 w-2 h-2 bg-white rounded-full animate-pulse" />
+                  )}
+                </span>
               </Link>
               <button onClick={handleLogout} className="text-left text-red-500">Выйти</button>
             </>

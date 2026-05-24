@@ -88,7 +88,7 @@ export default function HomePage() {
 
       <section className="bg-[#FFF8F5] rounded-3xl p-8 md:p-10 mb-8">
         <h2 className="text-2xl font-bold text-gray-900 mb-8 text-center">
-          Почему SkyBook?
+          Почему TickiPeaki?
         </h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {features.map((f) => (
